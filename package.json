@@ -1,0 +1,29 @@
+{
+  "name": "xenon-proxy",
+  "version": "1.0.0",
+  "description": "Proxy backend for the Xenon portal",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --use-system-ca server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@mercuryworkshop/bare-as-module3": "^2.2.5",
+    "@mercuryworkshop/bare-mux": "^2.1.9",
+    "@mercuryworkshop/epoxy-transport": "^3.0.1",
+    "@mercuryworkshop/libcurl-transport": "^2.0.5",
+    "@mercuryworkshop/scramjet": "^1.1.0",
+    "@mercuryworkshop/wisp-js": "^0.4.1",
+    "@titaniumnetwork-dev/ultraviolet": "^3.2.10",
+    "@tomphttp/bare-server-node": "^2.0.6",
+    "compression": "^1.7.4",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "http-proxy": "^1.18.1",
+    "node-fetch": "^3.3.2",
+    "wisp-server-node": "^1.1.8"
+  }
+}

@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: xenon-proxy
+    runtime: node
+    plan: free
+    buildCommand: npm install --ignore-scripts
+    startCommand: node --use-system-ca server.js
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

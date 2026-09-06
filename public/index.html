@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Xenon</title>
+<style>
+  :root{color-scheme:dark}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+       background:#05070e;color:#eef3ff;font:15px/1.5 "Leelawadee UI","Segoe UI",system-ui,sans-serif}
+  .wrap{width:min(560px,90vw);text-align:center}
+  h1{font-size:clamp(2.4rem,7vw,4rem);font-weight:700;letter-spacing:.05em;margin:0 0 1.4rem}
+  form{display:flex;gap:.5rem;align-items:center;padding:.5rem .5rem .5rem 1.1rem;border-radius:999px;
+       background:rgba(12,22,40,.6);border:1px solid rgba(150,185,255,.2)}
+  input{flex:1;min-width:0;background:none;border:0;outline:0;color:#eef3ff;font:inherit;padding:.55rem 0}
+  input::placeholder{color:rgba(216,231,255,.32)}
+  button{border:0;border-radius:999px;padding:.6rem 1.3rem;font:inherit;font-size:.8rem;letter-spacing:.1em;
+         text-transform:uppercase;color:#08101f;background:linear-gradient(180deg,#eaf1ff,#b9cdf0);cursor:pointer}
+  .engines{display:flex;gap:.4rem;justify-content:center;margin-top:1rem}
+  .eng{border:1px solid rgba(150,185,255,.2);background:rgba(12,22,40,.5);color:rgba(216,231,255,.6);
+       border-radius:999px;padding:.35rem 1rem;font:inherit;font-size:.68rem;letter-spacing:.12em;
+       text-transform:uppercase;cursor:pointer;transition:all .18s}
+  .eng.on{background:rgba(96,150,255,.22);color:#fff;border-color:rgba(170,205,255,.5)}
+  .status{margin-top:1.1rem;font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:rgba(216,231,255,.4)}
+  .status.err{color:rgba(255,150,150,.85)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>xenon</h1>
+  <form id="f" autocomplete="off">
+    <input id="q" type="text" placeholder="Search or enter URL..." spellcheck="false">
+    <button type="submit">Go</button>
+  </form>
+  <div class="engines">
+    <button class="eng" id="eng-uv" type="button">Ultraviolet</button>
+    <button class="eng" id="eng-sj" type="button">Scramjet</button>
+  </div>
+  <p class="status" id="s">starting</p>
+</div>
+
+<script src="/uv/uv.bundle.js"></script>
+<script src="/uv/uv.config.js"></script>
+<script src="/scram/scramjet.all.js"></script>
+<script src="/baremux/index.js"></script>
+<script>
+(function(){
+  var s = document.getElementById('s');
+  function say(t, err){ s.textContent = t; s.className = err ? 'status err' : 'status'; }
+
+  // ---- engine selection: ?e=scramjet|uv, else saved, else uv ----
+  var qs = new URLSearchParams(location.search);
+  var engine = qs.get('e') || (function(){ try { return localStorage.getItem('xenon-engine'); } catch(e){ return null; } })() || 'uv';
+  if (engine !== 'scramjet') engine = 'uv';
+
+  function paintEngine(){
+    document.getElementById('eng-uv').className = 'eng' + (engine === 'uv' ? ' on' : '');
+    document.getElementById('eng-sj').className = 'eng' + (engine === 'scramjet' ? ' on' : '');
+  }
+  function setEngine(e){
+    engine = e;
+    try { localStorage.setItem('xenon-engine', e); } catch(x){}
+    paintEngine();
+    say('engine: ' + (e === 'scramjet' ? 'scramjet' : 'ultraviolet'));
+  }
+  document.getElementById('eng-uv').addEventListener('click', function(){ setEngine('uv'); });
+  document.getElementById('eng-sj').addEventListener('click', function(){ setEngine('scramjet'); });
+  paintEngine();
+
+  function target(v){
+    v = (v || '').trim();
+    if (!v) return null;
+    if (/^https?:\/\//i.test(v)) return v;
+    if (v.indexOf(' ') === -1 && v.indexOf('.') > 0) return 'https://' + v;
+    return 'https://duckduckgo.com/?q=' + encodeURIComponent(v);
+  }
+
+  var sjController = null;
+  var booted = null;
+
+  function boot(){
+    if (booted) return booted;
+    booted = (async function(){
+      if (!navigator.serviceWorker) throw new Error('service workers need https or localhost');
+
+      say('registering worker');
+      await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      await navigator.serviceWorker.ready;
+
+      say('opening transport');
+      var conn = new BareMux.BareMuxConnection('/baremux/worker.js');
+      var mode = window.XENON_TRANSPORT || 'bare';
+      if (mode === 'bare') {
+        // Node does the TLS. Survives antivirus that intercepts HTTPS.
+        await conn.setTransport('/baremod/index.mjs', [location.origin + '/bare/']);
+      } else {
+        var path = (mode === 'libcurl') ? '/libcurl/index.mjs' : '/epoxy/index.mjs';
+        var wispUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/wisp/';
+        // bare-mux sends headers as a plain object; epoxy >=3.x and libcurl
+        // >=2.0.3 iterate them with for..of. Bridge that mismatch here.
+        await conn.setManualTransport(
+          'const mod = await import("' + path + '");' +
+          'const Real = mod.default;' +
+          'class HeaderShim extends Real {' +
+          '  async request(remote, method, body, headers, signal) {' +
+          '    let h = headers;' +
+          '    if (h && typeof h[Symbol.iterator] !== "function") h = new Headers(h);' +
+          '    return super.request(remote, method, body, h, signal);' +
+          '  }' +
+          '}' +
+          'return [HeaderShim, "' + path + '"];',
+          [{ wisp: wispUrl }]
+        );
+      }
+
+      // scramjet.init() posts its config to serviceWorker.controller, so the
+      // worker must be controlling this page first or the config never lands.
+      // A freshly-registered worker often does not control the page that
+      // registered it, even with clients.claim(). scramjet.init() posts its
+      // config to serviceWorker.controller, so without one the config never
+      // lands and /scramjet/ URLs fall through to Express as 404s.
+      // One guarded reload guarantees a controlled page.
+      if (!navigator.serviceWorker.controller) {
+        say('waiting for worker');
+        await new Promise(function(res){
+          var done = false, waited = 0;
+          function finish(){ if (!done) { done = true; res(); } }
+          navigator.serviceWorker.addEventListener('controllerchange', finish);
+          (function tick(){
+            if (done) return;
+            if (navigator.serviceWorker.controller) return finish();
+            waited += 200;
+            if (waited >= 3000) return finish();
+            setTimeout(tick, 200);
+          })();
+        });
+      }
+      if (!navigator.serviceWorker.controller) {
+        var flag = 'xenon-sw-reload';
+        var already = false;
+        try { already = sessionStorage.getItem(flag) === '1'; } catch(e){}
+        if (!already) {
+          try { sessionStorage.setItem(flag, '1'); } catch(e){}
+          say('reloading to attach worker');
+          location.reload();
+          await new Promise(function(){});   // stop here; the reload takes over
+        }
+      }
+      try { sessionStorage.removeItem('xenon-sw-reload'); } catch(e){}
+
+      say('ready');
+    })();
+    return booted;
+  }
+
+  // Scramjet is only started when it is actually the chosen engine, so a
+  // problem here can never stop Ultraviolet from working.
+  async function initScramjet(){
+    if (sjController) return sjController;
+    var ctl = $scramjetLoadController();
+    function build(){
+      return new ctl.ScramjetController({
+        prefix: '/scramjet/',
+        files: {
+          wasm: '/scram/scramjet.wasm.wasm',
+          all:  '/scram/scramjet.all.js',
+          sync: '/scram/scramjet.sync.js'
+        }
+      });
+    }
+    function withTimeout(p, ms, label){
+      return Promise.race([p, new Promise(function(_, rej){
+        setTimeout(function(){ rej(new Error(label)); }, ms);
+      })]);
+    }
+    var c = build();
+    try {
+      await withTimeout(c.init(), 12000, 'scramjet init timed out');
+    } catch (e) {
+      // A half-deleted IndexedDB leaves scramjet unable to open its store.
+      // Drop the database and try once more before giving up.
+      say('resetting scramjet store');
+      try {
+        if (window.indexedDB && indexedDB.databases) {
+          var dbs = await indexedDB.databases();
+          for (var i = 0; i < dbs.length; i++) {
+            if (dbs[i].name && dbs[i].name.toLowerCase().indexOf('scramjet') !== -1) {
+              await new Promise(function(res){
+                var rq = indexedDB.deleteDatabase(dbs[i].name);
+                rq.onsuccess = rq.onerror = rq.onblocked = function(){ res(); };
+              });
+            }
+          }
+        }
+      } catch (x) {}
+      c = build();
+      await withTimeout(c.init(), 12000, 'scramjet init timed out on retry');
+    }
+    sjController = c;
+    return c;
+  }
+
+  async function go(url){
+    try {
+      await boot();
+      if (engine === 'scramjet') {
+        say('starting scramjet');
+        var c = await initScramjet();
+        say('loading');
+        location.href = c.encodeUrl(url);
+      } else {
+        say('loading');
+        location.href = __uv$config.prefix + __uv$config.encodeUrl(url);
+      }
+    } catch (e) {
+      say(String(e.message || e), true);
+    }
+  }
+
+  document.getElementById('f').addEventListener('submit', function(e){
+    e.preventDefault();
+    var u = target(document.getElementById('q').value);
+    if (u) go(u);
+  });
+
+  var incoming = qs.get('u');
+  if (incoming) {
+    document.getElementById('q').value = incoming;
+    go(incoming);
+  } else {
+    boot().catch(function(e){ say(String(e.message || e), true); });
+  }
+})();
+</script>
+</body>
+</html>
