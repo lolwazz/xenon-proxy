@@ -79,10 +79,43 @@ server.on('request', (req, res) => {
   }
 });
 
+// A raw upgrade socket with no 'error' listener turns any socket failure into
+// an uncaught exception that kills the whole server. That happens routinely
+// here: a target site whose TLS handshake fails surfaces as
+// `write EPROTO ... tlsv1 alert internal error ... alert number 80`, and one
+// bad site would take every other user's session down with it.
 server.on('upgrade', (req, socket, head) => {
+  socket.on('error', (err) => {
+    console.warn('[upgrade socket] ' + (err && err.message ? err.message : err));
+    socket.destroy();
+  });
   if (bare.shouldRoute(req)) return bare.routeUpgrade(req, socket, head);
   if (req.url.startsWith('/wisp/')) return wisp.routeRequest(req, socket, head);
   socket.end();
+});
+
+// Malformed requests and TLS errors on the inbound side get the same
+// treatment: log and drop the one connection, never the process.
+server.on('clientError', (err, socket) => {
+  console.warn('[client error] ' + (err && err.message ? err.message : err));
+  if (socket.writable) socket.end('HTTP/1.1 400 Bad Request' + String.fromCharCode(13,10,13,10));
+  else socket.destroy();
+});
+
+// Last resort. An unhandled socket error anywhere in the proxy stack should
+// cost one request, not the server - the launcher would restart it, but every
+// open tab would lose its session.
+process.on('uncaughtException', (err) => {
+  const msg = (err && err.message) ? err.message : String(err);
+  if (/EPROTO|ECONNRESET|EPIPE|ETIMEDOUT|ECONNREFUSED|SSL|tlsv1|socket hang up/i.test(msg)) {
+    console.warn('[recovered] ' + msg);
+    return;
+  }
+  console.error('[fatal] ', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.warn('[unhandled rejection] ' + (reason && reason.message ? reason.message : reason));
 });
 
 const port = process.env.PORT || 8080;

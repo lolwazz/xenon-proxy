@@ -69,9 +69,19 @@ function cloudflaredBin() {
 function startServer() {
   serverProc = spawn(process.execPath, ['--use-system-ca', 'server.js'], {
     cwd: ROOT,
-    stdio: ['ignore', 'inherit', 'inherit'],
+    // 'inherit' sends output to a console nobody reads when detached,
+    // which is how a TLS error went unseen once already.
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PORT },
   });
+  const relay = (chunk) => {
+    const text = String(chunk).trimEnd();
+    if (!text) return;
+    console.log(text);
+    write(text);
+  };
+  serverProc.stdout.on('data', relay);
+  serverProc.stderr.on('data', relay);
   serverProc.on('exit', (code) => {
     if (stopping) return;
     log(`server exited (${code}) - restarting in 2s`);
