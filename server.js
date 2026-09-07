@@ -33,9 +33,34 @@ app.get('/healthz', (req, res) => res.json({ ok: true, engine: 'ultraviolet' }))
 const bare = createBareServer('/bare/');
 const server = createServer();
 
+// Proxied requests arrive at the bare server with no User-Agent, because the
+// browser strips it. Plenty of sites hard-block that: Wikipedia answers 403
+// with "Please set a user-agent". Inject the real browser UA (falling back to
+// a plausible one) when the bare request does not carry it.
+const FALLBACK_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+function ensureUserAgent(req) {
+  const raw = req.headers['x-bare-headers'];
+  if (typeof raw !== 'string') return;          // split across x-bare-headers-N
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return; }
+  if (!parsed || typeof parsed !== 'object') return;
+  for (const key of Object.keys(parsed)) {
+    if (key.toLowerCase() === 'user-agent') return;
+  }
+  parsed['User-Agent'] = req.headers['user-agent'] || FALLBACK_UA;
+  req.headers['x-bare-headers'] = JSON.stringify(parsed);
+}
+
 server.on('request', (req, res) => {
-  if (bare.shouldRoute(req)) bare.routeRequest(req, res);
-  else app(req, res);
+  if (bare.shouldRoute(req)) {
+    ensureUserAgent(req);
+    bare.routeRequest(req, res);
+  } else {
+    app(req, res);
+  }
 });
 
 server.on('upgrade', (req, socket, head) => {
