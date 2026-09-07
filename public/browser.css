@@ -2,6 +2,10 @@
   --bg:#05070e; --chrome:#0b1424; --line:rgba(150,185,255,.16);
   --ink:#eef3ff; --dim:rgba(216,231,255,.55); --accent:#8fb8ff}
 *{box-sizing:border-box}
+/* #boot and #shell set display:flex, which beats the UA stylesheet's
+   [hidden]{display:none}. Without this the boot overlay stays painted
+   over a fully working page, reading as "stuck on opening transport". */
+[hidden]{display:none!important}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
   font:14px/1.5 "Leelawadee UI","Segoe UI",system-ui,sans-serif;overflow:hidden}
 #chrome{display:flex;flex-direction:column;background:var(--chrome);border-bottom:1px solid var(--line)}

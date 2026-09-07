@@ -6,7 +6,9 @@ with epoxy and libcurl transports available.
 
 ## Run locally
     npm install
-    npm start          # http://localhost:8080
+    npm start          # http://localhost:8080, local only
+
+To make it reachable from anywhere, use `npm run go` instead - see below.
 
 ## Engines
 Two proxy engines, switchable at runtime:
@@ -31,29 +33,77 @@ portal passes it automatically: `/?u=<url>&e=scramjet`.
 | `/healthz` | health check (the portal pings this) |
 | `/uv/ /scram/ /baremux/ /baremod/ /epoxy/ /libcurl/` | client assets |
 
-## Sharing it right now (no deploy, no account)
-A Cloudflare quick tunnel gives a public https URL for the local server:
+## Run it: `npm run go`
 
-    npm start                # terminal 1
-    npm run tunnel           # terminal 2 -> prints a https://*.trycloudflare.com URL
+    npm install
+    npm run go
 
-Paste that URL into the site under **Settings > Proxy endpoint**.
+That one command starts the server, opens a Cloudflare quick tunnel, waits
+until the tunnel actually answers `/healthz`, and then writes the fresh URL
+into the WordPress `proxy-endpoint` page. Visitors pick it up on their next
+load; nobody edits anything by hand. It also watches both processes and
+repeats the whole sequence if either dies. `go.bat` does the same on a
+double-click.
 
-Caveats: it only works while your PC and both commands are running, and the
-URL is different every time you start the tunnel. It is a stopgap, not a
-deployment. `cloudflared` is installed locally in node_modules by the
-`cloudflared` npm package - nothing was installed system-wide.
+### Why this exists
+A quick tunnel gets a **new random hostname every time it starts**, but the
+portal used to have the old hostname baked into a page that both the browser
+and the WordPress host cache. After a restart the portal sat forever on
+"opening transport", talking to a URL that no longer existed. The endpoint is
+now looked up at runtime from one page, and that page is written by the
+launcher.
+
+The moving parts:
+
+| Where | What |
+|-------|------|
+| `scripts/launch.mjs` | starts server + tunnel, health-checks, publishes, restarts on failure |
+| WP page 171 (`proxy-endpoint`) | plain-text URL, the single source of truth |
+| Portal (post 13) | fetches that page on load, every 45s, and on tab focus |
+| Settings > Proxy endpoint | a manual override; set it and auto-discovery stops |
+
+### Making the publish step automatic
+Copy `.env.example` to `.env` and fill in an **application password** (not the
+login password) from wp-admin > Users > Profile > Application Passwords.
+Without it the launcher still runs - it just prints the URL for you to paste
+into the `proxy-endpoint` page yourself.
+
+### Limits of a quick tunnel
+It only lives while your PC is on and `npm run go` is running, and the
+hostname still changes on every restart (the launcher just makes that
+invisible). For a URL that never changes, see below.
 
 Do not bother with `localtunnel` or `untun`: localtunnel URLs die within
 minutes (408 then 502), and untun exits immediately on Windows.
+
+## A URL that never changes
+Ranked by effort, all free, none of them Render:
+
+1. **ngrok with a free static domain** - one reserved `*.ngrok-free.app`
+   hostname on the free plan. Still needs your PC on, but the URL is fixed
+   forever, so `proxy-endpoint` gets set once and never again.
+   `ngrok http 8080 --url=your-name.ngrok-free.app`
+2. **Hugging Face Spaces (Docker SDK)** - free, no card, permanent
+   `*.hf.space` URL, and it runs when your PC does not. The `Dockerfile` here
+   works as-is; expose port 7860 (`ENV PORT=7860`).
+3. **Koyeb / Northflank free tier** - free, no card, permanent URL, always on.
+4. **Cloudflare *named* tunnel** - permanent and fastest, but needs a
+   Cloudflare account with a domain on their nameservers.
+   `cloudflared tunnel create xenon` then route it to a hostname you own.
+5. **Fly.io** - `fly launch --copy-config --now` (uses `fly.toml`). Requires a
+   card on file even on the free allowance.
+
+Whatever you pick, put the https URL in the `proxy-endpoint` page (or in
+Settings > Proxy endpoint) once and stop running the launcher.
 
 ## Deploying
 Needs a Node host with WebSocket support. It will NOT run on the WordPress
 shared host, which is PHP. Configs for three options are included:
 
-- **Render** - push to GitHub, then New > Blueprint at the repo. `render.yaml` does the rest.
-- **Fly.io** - `fly launch --copy-config --now` (uses `fly.toml`).
 - **Docker** - `docker build -t xenon-proxy . && docker run -p 8080:8080 xenon-proxy`
+  (also what Hugging Face Spaces, Koyeb and Northflank consume)
+- **Fly.io** - `fly launch --copy-config --now` (uses `fly.toml`).
+- **Render** - `render.yaml` is still here if you change your mind.
 
 The host must give you an **https** URL: the portal is https and browsers block
 mixed content. Then set **Settings > Proxy endpoint** on the site to that URL.

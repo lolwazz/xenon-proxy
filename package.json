@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node --use-system-ca server.js",
     "tunnel": "cloudflared tunnel --url http://localhost:8080 --no-autoupdate",
-    "share": "node -e \"console.log('Run: npm start   (terminal 1)\nThen: npm run tunnel   (terminal 2)')\""
+    "share": "node -e \"console.log('Run: npm start   (terminal 1)\nThen: npm run tunnel   (terminal 2)')\"",
+    "go": "node scripts/launch.mjs"
   },
   "engines": {
     "node": ">=20"
