@@ -19,6 +19,7 @@
  */
 import 'dotenv/config';
 import { spawn } from 'node:child_process';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +42,18 @@ let liveUrl = '';
 let stopping = false;
 let missedBeats = 0;
 
-const log = (...a) => console.log('[xenon]', ...a);
+const LOG = join(ROOT, 'launcher.log');
+try { writeFileSync(LOG, '--- xenon launcher started ' + new Date().toISOString() + ' ---\n'); } catch { /* non-fatal */ }
+function write(line) {
+  try { appendFileSync(LOG, line.endsWith('\n') ? line : line + '\n'); } catch { /* non-fatal */ }
+}
+// Detached (double-clicked) runs have no console anyone reads, so everything
+// also goes to launcher.log next to this script.
+const log = (...a) => {
+  const line = '[xenon] ' + a.join(' ');
+  console.log(line);
+  write(`${new Date().toISOString()} ${line}`);
+};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function cloudflaredBin() {
@@ -65,6 +77,13 @@ function startServer() {
     log(`server exited (${code}) - restarting in 2s`);
     setTimeout(startServer, 2000);
   });
+}
+
+async function isLocalHealthy() {
+  try {
+    const r = await fetch(`http://127.0.0.1:${PORT}/healthz`);
+    return r.ok;
+  } catch { return false; }
 }
 
 async function waitForLocal() {
@@ -93,7 +112,9 @@ function startTunnel() {
   // cloudflared prints the URL on stderr, but it has moved between streams
   // across versions, so scan both.
   const scan = (chunk) => {
-    const hit = String(chunk).match(TUNNEL_RE);
+    const text = String(chunk);
+    write(text.trimEnd());          // cloudflared's own diagnostics
+    const hit = text.match(TUNNEL_RE);
     if (hit && !liveUrl) onTunnelUp(hit[0]);
   };
   tunnelProc.stdout.on('data', scan);
@@ -114,17 +135,30 @@ async function onTunnelUp(url) {
   // A quick tunnel answers its own hostname before it can reach the origin,
   // so publishing immediately would hand visitors a URL that 502s.
   let ready = false;
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 25; i++) {
     try {
       const r = await fetch(`${url}/healthz`, { cache: 'no-store' });
       if (r.ok) { ready = true; break; }
-    } catch { /* still warming */ }
+    } catch { /* still warming, or unreachable from here */ }
     await sleep(1000);
   }
+
+  // Failing to reach the tunnel FROM THIS MACHINE does not mean it is broken
+  // for visitors. Some home routers and ISP resolvers return NXDOMAIN for
+  // *.trycloudflare.com subdomains while public resolvers answer normally, so
+  // the owner cannot open their own tunnel even though everyone else can.
+  // Cycling the tunnel in that case just churns forever and never publishes.
   if (!ready) {
-    log('tunnel never answered /healthz - cycling it');
-    try { tunnelProc.kill(); } catch { /* already gone */ }
-    return;
+    const localOk = await isLocalHealthy();
+    if (!localOk) {
+      log('tunnel never answered and the local server is down too - cycling it');
+      try { tunnelProc.kill(); } catch { /* already gone */ }
+      return;
+    }
+    log('WARNING: could not reach the tunnel from this machine, but the local');
+    log('server is healthy - this is usually your router or ISP blocking');
+    log('*.trycloudflare.com in DNS. Publishing anyway: it should work for');
+    log('everyone else. To fix it here, set this PC DNS to 1.1.1.1.');
   }
 
   await publish(url);
@@ -174,10 +208,14 @@ async function heartbeat() {
     const r = await fetch(`${liveUrl}/healthz`, { cache: 'no-store' });
     if (r.ok) { missedBeats = 0; return; }
   } catch { /* counted below */ }
+  if (!(await isLocalHealthy())) return;   // server restarting; not the tunnel's fault
   missedBeats++;
-  log(`tunnel health check failed (${missedBeats}/2)`);
-  if (missedBeats >= 2) {
-    log('cycling the tunnel');
+  log(`tunnel health check failed (${missedBeats}/3)`);
+  // Same caveat as onTunnelUp: if this machine simply cannot resolve the
+  // hostname, every beat fails forever and cycling accomplishes nothing.
+  if (missedBeats === 3) {
+    log('cycling the tunnel once; if this repeats, the tunnel is likely fine');
+    log('and it is this machine that cannot reach it (DNS filtering).');
     liveUrl = '';
     try { tunnelProc.kill(); } catch { /* already gone */ }
   }
