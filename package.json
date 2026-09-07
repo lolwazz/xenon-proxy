@@ -5,7 +5,9 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node --use-system-ca server.js"
+    "start": "node --use-system-ca server.js",
+    "tunnel": "cloudflared tunnel --url http://localhost:8080 --no-autoupdate",
+    "share": "node -e \"console.log('Run: npm start   (terminal 1)\nThen: npm run tunnel   (terminal 2)')\""
   },
   "engines": {
     "node": ">=20"
@@ -19,6 +21,7 @@
     "@mercuryworkshop/wisp-js": "^0.4.1",
     "@titaniumnetwork-dev/ultraviolet": "^3.2.10",
     "@tomphttp/bare-server-node": "^2.0.6",
+    "cloudflared": "^0.7.3",
     "compression": "^1.7.4",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

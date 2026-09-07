@@ -31,6 +31,22 @@ portal passes it automatically: `/?u=<url>&e=scramjet`.
 | `/healthz` | health check (the portal pings this) |
 | `/uv/ /scram/ /baremux/ /baremod/ /epoxy/ /libcurl/` | client assets |
 
+## Sharing it right now (no deploy, no account)
+A Cloudflare quick tunnel gives a public https URL for the local server:
+
+    npm start                # terminal 1
+    npm run tunnel           # terminal 2 -> prints a https://*.trycloudflare.com URL
+
+Paste that URL into the site under **Settings > Proxy endpoint**.
+
+Caveats: it only works while your PC and both commands are running, and the
+URL is different every time you start the tunnel. It is a stopgap, not a
+deployment. `cloudflared` is installed locally in node_modules by the
+`cloudflared` npm package - nothing was installed system-wide.
+
+Do not bother with `localtunnel` or `untun`: localtunnel URLs die within
+minutes (408 then 502), and untun exits immediately on Windows.
+
 ## Deploying
 Needs a Node host with WebSocket support. It will NOT run on the WordPress
 shared host, which is PHP. Configs for three options are included:
