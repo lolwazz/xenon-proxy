@@ -109,7 +109,7 @@ The host must give you an **https** URL: the portal is https and browsers block
 mixed content. Then set **Settings > Proxy endpoint** on the site to that URL.
 No code change needed.
 
-## Four things that will bite you
+## Five things that will bite you
 
 **1. The header shim is required.**
 bare-mux sends request headers as a plain object, but epoxy >=3.x and libcurl
@@ -129,7 +129,16 @@ registered worker often does not control the page that registered it, even
 with `clients.claim()`, so the config never lands and `/scramjet/` URLs fall
 through to Express as 404s. `index.html` does one guarded reload to fix this.
 
-**4. `--use-system-ca` in the start script is load-bearing on Windows.**
+**4. bare-server-node rate-limits you by default, and it is brutal.**
+`createBareServer()` silently installs a limiter of **10 keep-alive requests
+per IP per 60s, then blocks that IP for another 60s**, answering 429
+`Too many keep-alive connections from this IP address`. One ordinary page load
+makes far more requests than that, so every visitor trips it within seconds -
+this is what made heavy sites (YouTube, Poki) return walls of 500s. `server.js`
+passes a raised `connectionLimiter`. It must be an **object**: `createServer.js`
+does `if (!init.connectionLimiter)`, so `false`/`null`/`0` restore the default.
+
+**5. `--use-system-ca` in the start script is load-bearing on Windows.**
 Antivirus that scans HTTPS (AVG, ESET, Kaspersky, Bitdefender) replaces
 certificates with its own root. Node only trusts it via the OS store. Without
 the flag, every HTTPS fetch fails with `UnknownIssuer`. Diagnose with:

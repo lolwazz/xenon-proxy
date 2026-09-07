@@ -30,7 +30,23 @@ app.use('/baremod/', express.static(pkg('@mercuryworkshop/bare-as-module3/dist')
 
 app.get('/healthz', (req, res) => res.json({ ok: true, engine: 'ultraviolet' }));
 
-const bare = createBareServer('/bare/');
+// bare-server-node quietly applies a DEFAULT connection limiter of 10
+// keep-alive requests per IP per 60s, then blocks that IP for another 60s and
+// answers 429 "Too many keep-alive connections from this IP address". One
+// ordinary page load makes far more requests than that, so every visitor trips
+// it within seconds - this was the real cause of the proxy "not working" and of
+// the flood of 500s on heavier sites. Raise the ceiling so it only catches a
+// genuine runaway.
+//
+// It must be an OBJECT: createServer.js does `if (!init.connectionLimiter)`,
+// so passing false, null or 0 silently restores the 10/minute default.
+const bare = createBareServer('/bare/', {
+  connectionLimiter: {
+    maxConnectionsPerIP: 20000,
+    windowDuration: 60,
+    blockDuration: 1,
+  },
+});
 const server = createServer();
 
 // Proxied requests arrive at the bare server with no User-Agent, because the
