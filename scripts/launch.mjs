@@ -41,6 +41,13 @@ let tunnelProc = null;
 let liveUrl = '';
 let stopping = false;
 let missedBeats = 0;
+// Set once we prove the tunnel is live for visitors but unreachable from this
+// machine (router/ISP NXDOMAIN on *.trycloudflare.com). Sticky for the process
+// lifetime: the block does not come and go, and treating every failed beat as
+// a dead tunnel cycled the tunnel every 3 minutes and rewrote the WordPress
+// page each time, which is abuse of a shared host.
+let unverifiable = false;
+let lastPublished = '';
 
 const LOG = join(ROOT, 'launcher.log');
 try { writeFileSync(LOG, '--- xenon launcher started ' + new Date().toISOString() + ' ---\n'); } catch { /* non-fatal */ }
@@ -169,6 +176,10 @@ async function onTunnelUp(url) {
     log('server is healthy - this is usually your router or ISP blocking');
     log('*.trycloudflare.com in DNS. Publishing anyway: it should work for');
     log('everyone else. To fix it here, set this PC DNS to 1.1.1.1.');
+    if (!unverifiable) {
+      unverifiable = true;
+      log('tunnel health monitoring disabled - it can never succeed from here.');
+    }
   }
 
   await publish(url);
@@ -179,6 +190,8 @@ async function onTunnelUp(url) {
 
 async function publish(url) {
   if (!CAN_PUBLISH) return;
+  // Every write creates a WordPress revision. Never write the same URL twice.
+  if (url === lastPublished) { log('endpoint unchanged - not rewriting the page'); return; }
   try {
     const res = await fetch(`${WP_SITE}/wp-json/wp/v2/pages/${WP_PAGE}`, {
       method: 'POST',
@@ -188,7 +201,7 @@ async function publish(url) {
       },
       body: JSON.stringify({ content: url, status: 'publish' }),
     });
-    if (res.ok) log('published to WordPress - visitors pick this up on next load');
+    if (res.ok) { lastPublished = url; log('published to WordPress - visitors pick this up on next load'); }
     else log(`WordPress rejected the update (${res.status}) - paste it manually, see below`);
   } catch (err) {
     log('could not reach WordPress:', err.message);
@@ -213,7 +226,7 @@ function banner(url) {
 // If the tunnel silently stops forwarding, cloudflared often stays alive. Poll
 // through the public URL rather than trusting the process to exit.
 async function heartbeat() {
-  if (stopping || !liveUrl) return;
+  if (stopping || !liveUrl || unverifiable) return;
   try {
     const r = await fetch(`${liveUrl}/healthz`, { cache: 'no-store' });
     if (r.ok) { missedBeats = 0; return; }
@@ -223,11 +236,13 @@ async function heartbeat() {
   log(`tunnel health check failed (${missedBeats}/3)`);
   // Same caveat as onTunnelUp: if this machine simply cannot resolve the
   // hostname, every beat fails forever and cycling accomplishes nothing.
-  if (missedBeats === 3) {
-    log('cycling the tunnel once; if this repeats, the tunnel is likely fine');
-    log('and it is this machine that cannot reach it (DNS filtering).');
-    liveUrl = '';
-    try { tunnelProc.kill(); } catch { /* already gone */ }
+  if (missedBeats >= 3) {
+    // startTunnel() resets missedBeats, so cycling here without the
+    // `unverifiable` latch turned "cycle once" into an endless 3-minute loop
+    // that recreated the tunnel and rewrote the WordPress page every time.
+    unverifiable = true;
+    log('cannot reach the tunnel from here but the local server is healthy;');
+    log('assuming DNS filtering and leaving the tunnel alone from now on.');
   }
 }
 
