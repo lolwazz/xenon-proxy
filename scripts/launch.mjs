@@ -35,6 +35,11 @@ const WP_PAGE   = process.env.WP_ENDPOINT_PAGE || '171';
 const CAN_PUBLISH = Boolean(WP_USER && WP_PASS);
 
 const TUNNEL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
+// cloudflared keeps running after it loses the edge, so its process exiting is
+// not the signal. These are, and unlike an HTTP probe they work even when this
+// machine cannot resolve the tunnel hostname at all.
+const DEAD_TUNNEL_RE =
+  /Failed to refresh DNS|Unregistered tunnel connection|no more connections active|Connection terminated|failed to connect to a Cloudflare edge/i;
 
 let serverProc = null;
 let tunnelProc = null;
@@ -48,6 +53,12 @@ let missedBeats = 0;
 // page each time, which is abuse of a shared host.
 let unverifiable = false;
 let lastPublished = '';
+// When the tunnel cannot be health-checked over HTTP (see `unverifiable`), the
+// only remaining signal that it died is cloudflared's own output. Watch that
+// instead, and rate-limit restarts hard so a flaky network cannot turn into a
+// write loop against the WordPress host.
+let lastTunnelStart = 0;
+const MIN_RESTART_GAP_MS = 10 * 60 * 1000;
 
 const LOG = join(ROOT, 'launcher.log');
 try { writeFileSync(LOG, '--- xenon launcher started ' + new Date().toISOString() + ' ---\n'); } catch { /* non-fatal */ }
@@ -119,6 +130,7 @@ async function waitForLocal() {
 function startTunnel() {
   liveUrl = '';
   missedBeats = 0;
+  lastTunnelStart = Date.now();
 
   tunnelProc = spawn(
     cloudflaredBin(),
@@ -133,6 +145,7 @@ function startTunnel() {
     write(text.trimEnd());          // cloudflared's own diagnostics
     const hit = text.match(TUNNEL_RE);
     if (hit && !liveUrl) onTunnelUp(hit[0]);
+    if (DEAD_TUNNEL_RE.test(text)) onTunnelTrouble(text);
   };
   tunnelProc.stdout.on('data', scan);
   tunnelProc.stderr.on('data', scan);
@@ -184,6 +197,18 @@ async function onTunnelUp(url) {
 
   await publish(url);
   banner(url);
+}
+
+// cloudflared reported it lost the edge. Restart the tunnel, but never more
+// than once per MIN_RESTART_GAP_MS - each restart means a new hostname and a
+// write to WordPress, and an unreliable network must not turn that into a loop.
+function onTunnelTrouble(text) {
+  const since = Date.now() - lastTunnelStart;
+  if (since < MIN_RESTART_GAP_MS) return;
+  log('cloudflared reports it lost the edge:', text.trim().split(String.fromCharCode(10))[0].slice(0, 160));
+  log('restarting the tunnel (rate limited to once every 10 minutes)');
+  liveUrl = '';
+  try { tunnelProc.kill(); } catch { /* already gone */ }
 }
 
 /* ------------------------------------------------------------- publishing -- */
