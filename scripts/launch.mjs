@@ -217,6 +217,30 @@ async function publish(url) {
   if (!CAN_PUBLISH) return;
   // Every write creates a WordPress revision. Never write the same URL twice.
   if (url === lastPublished) { log('endpoint unchanged - not rewriting the page'); return; }
+
+  // Once the proxy is deployed somewhere permanent, the proxy-endpoint page
+  // holds that hosted URL. Starting this launcher out of habit must not
+  // silently replace it with a throwaway tunnel and send every visitor to a
+  // hostname that dies when this machine sleeps. Only ever overwrite a page
+  // that is empty or already holds a quick-tunnel URL.
+  try {
+    const cur = await fetch(
+      `${WP_SITE}/wp-json/wp/v2/pages/${WP_PAGE}?_fields=content&_=${Date.now()}`,
+      { cache: 'no-store' },
+    );
+    if (cur.ok) {
+      const j = await cur.json();
+      const existing = ((j.content && j.content.rendered) || '')
+        .replace(/<[^>]*>/g, '').trim();
+      if (existing && !/trycloudflare\.com/i.test(existing)) {
+        log('proxy-endpoint already points at a hosted URL:');
+        log(`  ${existing}`);
+        log('refusing to overwrite it with a tunnel. Clear that page first if');
+        log('you really want to go back to tunnels.');
+        return;
+      }
+    }
+  } catch { /* if the check fails, fall through and publish as before */ }
   try {
     const res = await fetch(`${WP_SITE}/wp-json/wp/v2/pages/${WP_PAGE}`, {
       method: 'POST',
