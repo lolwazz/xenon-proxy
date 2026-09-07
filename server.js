@@ -40,6 +40,20 @@ app.get('/healthz', (req, res) => res.json({ ok: true, engine: 'ultraviolet' }))
 //
 // It must be an OBJECT: createServer.js does `if (!init.connectionLimiter)`,
 // so passing false, null or 0 silently restores the 10/minute default.
+// Anything reaching here escaped both the proxy rewriter and the static
+// mounts. Express's default handler answers with an HTML error page, so a
+// proxied site's fetch(...).json() dies on
+// `Unexpected token '<', "<!doctype "... is not valid JSON` - which reads like
+// a Xenon bug but is really one un-rewritten request. Answer in JSON so the
+// calling code just sees an ordinary 404.
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'not_found',
+    path: req.url,
+    hint: 'This request reached the proxy origin directly instead of being rewritten.',
+  });
+});
+
 const bare = createBareServer('/bare/', {
   connectionLimiter: {
     maxConnectionsPerIP: 20000,
