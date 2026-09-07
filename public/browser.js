@@ -296,6 +296,51 @@
   }, 800);
 
   /* ---------- boot ---------- */
+  function withTimeout(p, ms, label) {
+    return Promise.race([
+      p,
+      new Promise(function (_, rej) { setTimeout(function () { rej(new Error(label)); }, ms); })
+    ]);
+  }
+
+  /* Wipe every bit of state that can wedge the boot: the service worker,
+     caches, scramjet's IndexedDB, and the one-shot reload flag. */
+  async function hardReset() {
+    try {
+      var regs = await navigator.serviceWorker.getRegistrations();
+      for (var i = 0; i < regs.length; i++) await regs[i].unregister();
+    } catch (e) {}
+    try { if (window.caches) { var ks = await caches.keys(); for (var j = 0; j < ks.length; j++) await caches.delete(ks[j]); } } catch (e) {}
+    try { sessionStorage.removeItem('xenon-sw-reload'); } catch (e) {}
+    try { localStorage.removeItem('bare-mux-path'); } catch (e) {}
+    try {
+      if (window.indexedDB && indexedDB.databases) {
+        var dbs = await indexedDB.databases();
+        for (var k = 0; k < dbs.length; k++) {
+          if (!dbs[k].name) continue;
+          await new Promise(function (res) {
+            var rq = indexedDB.deleteDatabase(dbs[k].name);
+            rq.onsuccess = rq.onerror = rq.onblocked = function () { res(); };
+            setTimeout(res, 1500);
+          });
+        }
+      }
+    } catch (e) {}
+  }
+
+  function bootFailed(msg) {
+    say(msg);
+    var btn = document.getElementById('bootreset');
+    if (!btn) return;
+    btn.hidden = false;
+    btn.onclick = async function () {
+      btn.disabled = true;
+      say('clearing worker and caches');
+      await hardReset();
+      location.replace(location.pathname + location.search);
+    };
+  }
+
   function initScramjet() {
     if (sjController) return Promise.resolve(sjController);
     var ctl = $scramjetLoadController();
@@ -308,6 +353,15 @@
       new Promise(function (_, rej) { setTimeout(function () { rej(new Error('scramjet init timed out')); }, 12000); })
     ]).then(function () { sjController = c; return c; });
   }
+
+  /* Last-resort watchdog: if the boot screen is still up after 25s, something
+     hung that we did not anticipate. Offer the reset rather than sitting on
+     "opening transport" forever. */
+  setTimeout(function () {
+    if (boot && !boot.hidden && document.getElementById('bootreset').hidden) {
+      bootFailed('stuck on "' + bootmsg.textContent + '" - press Reset and retry');
+    }
+  }, 25000);
 
   (async function start() {
     try {
@@ -344,8 +398,17 @@
       try { sessionStorage.removeItem('xenon-sw-reload'); } catch (e) {}
 
       say('opening transport');
+      if (typeof SharedWorker === 'undefined') {
+        throw new Error('this browser has SharedWorker disabled, which bare-mux needs');
+      }
+      // setTransport can hang forever if the worker port never arrives, which
+      // leaves the boot screen stuck on "opening transport". Bound it.
       var conn = new BareMux.BareMuxConnection('/baremux/worker.js');
-      await conn.setTransport('/baremod/index.mjs', [location.origin + '/bare/']);
+      await withTimeout(
+        conn.setTransport('/baremod/index.mjs', [location.origin + '/bare/']),
+        15000,
+        'transport did not open in 15s - press Reset and retry'
+      );
 
       var qs = new URLSearchParams(location.search);
       var e = qs.get('e');
@@ -367,7 +430,7 @@
       newTab(first ? toTarget(first) : null);
       if (!first) urlEl.focus();
     } catch (err) {
-      say(String(err.message || err));
+      bootFailed(String(err.message || err));
     }
   })();
 })();
