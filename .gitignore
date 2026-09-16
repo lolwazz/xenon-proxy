@@ -2,3 +2,5 @@ node_modules/
 .env
 npm-debug.log
 launcher.log
+public/g/
+backend/data/

@@ -16,8 +16,9 @@
   function jget(k, d) { try { var v = JSON.parse(localStorage.getItem(k)); if (v) return v; } catch (e) {} return d; }
   function jset(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
-  var engine = pref('xenon-engine', 'uv');
-  if (engine !== 'scramjet') engine = 'uv';
+  var engine = pref('xenon-engine', 'scramjet');
+  // Anything unrecognised falls back to the default rather than breaking.
+  if (engine !== 'uv') engine = 'scramjet';
   engineEl.value = engine;
 
   /* ---------- url helpers ---------- */
@@ -67,6 +68,10 @@
     var tab = { id: nextId++, url: url || null, title: url ? hostOf(url) : 'New tab', history: [], hi: -1, frame: null };
     var f = document.createElement('iframe');
     f.setAttribute('allow', 'autoplay; fullscreen; clipboard-read; clipboard-write');
+    // No allow-popups: stops pop-under ad tabs, which streaming and game
+    // sites throw on load. Everything a real page needs is still granted.
+    f.setAttribute('sandbox',
+      'allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock allow-downloads');
     f.hidden = true;
     viewsEl.appendChild(f);
     tab.frame = f;
@@ -424,6 +429,12 @@
 
       boot.hidden = true;
       shell.hidden = false;
+      // ?chrome=0 hides the tab strip and toolbar. Used when the portal frames
+      // a single site and wants it to look like that site, not like a browser.
+      if (qs.get('chrome') === '0') {
+        var chromeEl = document.getElementById('chrome');
+        if (chromeEl) chromeEl.hidden = true;
+      }
       renderBookmarks();
 
       var first = qs.get('u');

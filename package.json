@@ -8,7 +8,8 @@
     "start": "node --use-system-ca server.js",
     "tunnel": "cloudflared tunnel --url http://localhost:8080 --no-autoupdate",
     "share": "node -e \"console.log('Run: npm start   (terminal 1)\nThen: npm run tunnel   (terminal 2)')\"",
-    "go": "node scripts/launch.mjs"
+    "go": "node scripts/launch.mjs",
+    "thumbs": "node scripts/thumbs.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -20,6 +21,7 @@
     "@mercuryworkshop/libcurl-transport": "^2.0.5",
     "@mercuryworkshop/scramjet": "^1.1.0",
     "@mercuryworkshop/wisp-js": "^0.4.1",
+    "@ruffle-rs/ruffle": "^0.6.0",
     "@titaniumnetwork-dev/ultraviolet": "^3.2.10",
     "@tomphttp/bare-server-node": "^2.0.6",
     "cloudflared": "^0.7.3",
@@ -28,6 +30,7 @@
     "express": "^4.19.2",
     "http-proxy": "^1.18.1",
     "node-fetch": "^3.3.2",
+    "puppeteer": "^25.10.0",
     "wisp-server-node": "^1.1.8"
   }
 }

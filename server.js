@@ -6,6 +6,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBareServer } from '@tomphttp/bare-server-node';
 import { server as wisp } from '@mercuryworkshop/wisp-js/server';
+import { isBlocked, stats as adStats } from './backend/adblock.js';
+import { mountAuth, checkRequest, checkUpgrade, authEnabled } from './backend/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = (p) => join(__dirname, 'node_modules', p);
@@ -19,6 +21,8 @@ app.use((req, res, next) => {
   next();
 });
 
+mountAuth(app);
+
 // public/ is mounted FIRST so our own uv.config.js overrides the package default.
 app.use(express.static(join(__dirname, 'public')));
 app.use('/uv/',      express.static(pkg('@titaniumnetwork-dev/ultraviolet/dist')));
@@ -27,6 +31,95 @@ app.use('/baremux/', express.static(pkg('@mercuryworkshop/bare-mux/dist')));
 app.use('/epoxy/',   express.static(pkg('@mercuryworkshop/epoxy-transport/dist')));
 app.use('/libcurl/', express.static(pkg('@mercuryworkshop/libcurl-transport/dist')));
 app.use('/baremod/', express.static(pkg('@mercuryworkshop/bare-as-module3/dist')));
+
+// Ruffle: a WebAssembly Flash Player. Self-hosted so .swf games keep working
+// no matter what happens to anyone else's servers - Flash itself was removed
+// from every browser in 2020, so this is the only way to run them.
+app.use('/ruffle/', express.static(pkg('@ruffle-rs/ruffle')));
+
+// Wraps a .swf in a page that boots Ruffle and fills the screen. Served from
+// /flash/<file>.swf so the games grid can link to it like any other game.
+app.get('/flash/:file', (req, res) => {
+  const file = String(req.params.file || '');
+  if (!/^[\w.-]+\.swf$/i.test(file)) return res.status(400).send('bad file');
+  res.type('html').send(`<!doctype html>
+<html><head><meta charset="utf-8"><title>${file.replace(/\.swf$/i, '')}</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  #player{width:100vw;height:100vh}
+</style>
+<script src="/ruffle/ruffle.js"></script>
+</head><body>
+<div id="player"></div>
+<script>
+  window.RufflePlayer = window.RufflePlayer || {};
+  window.RufflePlayer.config = {
+    autoplay: 'on',
+    unmuteOverlay: 'hidden',
+    letterbox: 'on',
+    contextMenu: 'off',
+    warnOnUnsupportedContent: false,
+  };
+  window.addEventListener('load', function () {
+    var ruffle = window.RufflePlayer.newest();
+    var player = ruffle.createPlayer();
+    document.getElementById('player').appendChild(player);
+    player.style.width = '100%';
+    player.style.height = '100%';
+    player.load('/g/flash/${encodeURIComponent(file)}');
+  });
+</script>
+</body></html>`);
+});
+
+// Music API from PeteZahGames (github.com/PeteZah-Games/PeteZahGames), used
+// with the author's permission. Provides /browse, /search, /track/:id,
+// /play/:id, /stream/:id and a token-gated /media/:token audio proxy.
+// Loaded lazily so a failure here cannot stop the proxy itself from starting.
+try {
+  const { default: musicRouter } = await import('./backend/routes/music.js');
+  app.use('/api/music', musicRouter);
+  // Mounted before the upstream router's own routes take over, so /find wins.
+  const { default: findRouter } = await import('./backend/routes/music-find.js');
+  app.use('/api/music/find', findRouter);
+  const { default: statsRouter } = await import('./backend/routes/music-stats.js');
+  app.use('/api/music/stats', statsRouter);
+  const { default: presenceRouter } = await import('./backend/routes/presence.js');
+  app.use('/api/presence', presenceRouter);
+  console.log('music API mounted at /api/music');
+} catch (err) {
+  console.warn('music API unavailable: ' + (err && err.message ? err.message : err));
+}
+
+// Cover-art proxy, so the music page makes no direct requests to Google's or
+// SoundCloud's CDNs. Allowlisted hosts only - this must not become an open
+// image relay. The page falls back to the original URL if this fails.
+const ART_HOSTS = [
+  /(^|\.)ytimg\.com$/i,
+  /(^|\.)ggpht\.com$/i,
+  /(^|\.)mzstatic\.com$/i,
+  /(^|\.)sndcdn\.com$/i,
+  /(^|\.)scdn\.co$/i,
+];
+app.get('/img', async (req, res) => {
+  let target;
+  try { target = new URL(String(req.query.u || '')); } catch { return res.status(400).end(); }
+  if (target.protocol !== 'https:') return res.status(400).end();
+  if (!ART_HOSTS.some((re) => re.test(target.hostname))) return res.status(403).end();
+  try {
+    const upstream = await fetch(target.href, { headers: { 'User-Agent': FALLBACK_UA } });
+    if (!upstream.ok) return res.status(upstream.status).end();
+    const type = upstream.headers.get('content-type') || '';
+    if (!type.startsWith('image/')) return res.status(415).end();
+    res.setHeader('Content-Type', type);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.end(Buffer.from(await upstream.arrayBuffer()));
+  } catch {
+    res.status(502).end();
+  }
+});
+
+app.get('/adblock/stats', (req, res) => res.json(adStats));
 
 app.get('/healthz', (req, res) => res.json({ ok: true, engine: 'ultraviolet' }));
 
@@ -84,8 +177,24 @@ function ensureUserAgent(req) {
   req.headers['x-bare-headers'] = JSON.stringify(parsed);
 }
 
+// The target of a bare request lives in x-bare-url, so ad hosts can be dropped
+// here - before the machine ever contacts them. 204 rather than an error keeps
+// the calling page happy.
+function adBlocked(req, res) {
+  const target = req.headers['x-bare-url'];
+  if (typeof target !== 'string') return false;
+  if (!isBlocked(target)) { adStats.allowed++; return false; }
+  adStats.blocked++;
+  res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
+  res.end();
+  return true;
+}
+
 server.on('request', (req, res) => {
+  // Gate before anything else, including the bare server.
+  if (!checkRequest(req, res)) return;
   if (bare.shouldRoute(req)) {
+    if (adBlocked(req, res)) return;
     ensureUserAgent(req);
     bare.routeRequest(req, res);
   } else {
@@ -99,6 +208,7 @@ server.on('request', (req, res) => {
 // `write EPROTO ... tlsv1 alert internal error ... alert number 80`, and one
 // bad site would take every other user's session down with it.
 server.on('upgrade', (req, socket, head) => {
+  if (!checkUpgrade(req, socket)) return;
   socket.on('error', (err) => {
     console.warn('[upgrade socket] ' + (err && err.message ? err.message : err));
     socket.destroy();
@@ -133,4 +243,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const port = process.env.PORT || 8080;
-server.listen(port, () => console.log('xenon-proxy listening on ' + port));
+server.listen(port, () => {
+  console.log('xenon-proxy listening on ' + port);
+  console.log(authEnabled ? 'proxy is password protected' : 'WARNING: proxy is OPEN - set XENON_PASSWORD in .env');
+});
