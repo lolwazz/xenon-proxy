@@ -1,0 +1,18 @@
+{
+ "engine": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-engine-v7.js",
+ "textures": {
+  "img/drop-alpha.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-drop-alpha.png",
+  "img/drop-color.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-drop-color.png",
+  "img/weather/texture-rain-fg.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-texture-rain-fg.png",
+  "img/weather/texture-rain-bg.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-texture-rain-bg.png",
+  "img/weather/texture-storm-lightning-fg.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-texture-storm-lightning-fg.png",
+  "img/weather/texture-storm-lightning-bg.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-texture-storm-lightning-bg.png",
+  "img/weather/texture-fallout-fg.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-texture-fallout-fg.png",
+  "img/weather/texture-fallout-bg.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-texture-fallout-bg.png",
+  "img/weather/texture-sun-fg.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-texture-sun-fg.png",
+  "img/weather/texture-sun-bg.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-texture-sun-bg.png",
+  "img/weather/texture-drizzle-fg.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-texture-drizzle-fg.png",
+  "img/weather/texture-drizzle-bg.png": "https://xenonsschoollearning.online/wp-content/uploads/2026/09/rain-texture-drizzle-bg.png"
+ },
+ "oldEngineId": 536
+}

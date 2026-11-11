@@ -1,0 +1,95 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>saves</title>
+<script>
+/* Reads this origin's game saves (localStorage and IndexedDB) and hands them
+   to the portal around it, which passes them on to the games' new home
+   (save-import.html there). Only the portal's own domains can ask: anything
+   else framing this page gets nothing. */
+(function () {
+  'use strict';
+  var ALLOWED = /^https:\/\/(www\.|site\.|2\.)?(zpack\.beauty|xenonsschoollearning\.online)$|^http:\/\/localhost(:\d+)?$/;
+  /* The proxy's own data, not a game's: the VM saves are whole machines, the
+     unblockers keep caches. None of it belongs with the games. */
+  var SKIP = /^(xenon-vm|xn-clips|\$scramjet|scramjet|__op|uv|bare-mux|keyval-store|workbox)/i;
+  var DB_MAX = 64 * 1024 * 1024;
+
+  var parentOrigin = '';
+  try { parentOrigin = location.ancestorOrigins && location.ancestorOrigins[0] ? location.ancestorOrigins[0] : new URL(document.referrer).origin; } catch (e) {}
+  if (window.parent === window || !ALLOWED.test(parentOrigin)) return;
+
+  function req(r) { return new Promise(function (ok, no) { r.onsuccess = function () { ok(r.result); }; r.onerror = function () { no(r.error); }; }); }
+  function size(v) {
+    if (v == null) return 8;
+    if (typeof v === 'string') return v.length * 2;
+    if (v instanceof ArrayBuffer) return v.byteLength;
+    if (ArrayBuffer.isView(v)) return v.byteLength;
+    if (typeof Blob !== 'undefined' && v instanceof Blob) return v.size;
+    if (typeof v === 'object') { var n = 0; for (var k in v) { n += k.length * 2 + size(v[k]); if (n > DB_MAX) return n; } return n; }
+    return 8;
+  }
+
+  function openExisting(name) {
+    return new Promise(function (ok, no) {
+      var r = indexedDB.open(name);
+      var fresh = false;
+      r.onupgradeneeded = function () { fresh = true; };
+      r.onsuccess = function () {
+        if (fresh) { r.result.close(); indexedDB.deleteDatabase(name); ok(null); return; }
+        ok(r.result);
+      };
+      r.onerror = function () { no(r.error); };
+    });
+  }
+
+  function dumpDb(name) {
+    return openExisting(name).then(function (db) {
+      if (!db) return null;
+      var names = [].slice.call(db.objectStoreNames);
+      var total = 0;
+      var stores = [];
+      return names.reduce(function (p, sn) {
+        return p.then(function () {
+          if (total > DB_MAX) return;
+          var st = db.transaction(sn, 'readonly').objectStore(sn);
+          var meta = {
+            name: sn, keyPath: st.keyPath, autoIncrement: st.autoIncrement,
+            indexes: [].slice.call(st.indexNames).map(function (n) {
+              var i = st.index(n);
+              return { name: n, keyPath: i.keyPath, unique: i.unique, multiEntry: i.multiEntry };
+            })
+          };
+          return Promise.all([req(st.getAllKeys()), req(st.getAll())]).then(function (kv) {
+            meta.keys = kv[0];
+            meta.vals = kv[1];
+            total += size(kv[1]);
+            stores.push(meta);
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        var out = { name: name, version: db.version, stores: stores };
+        db.close();
+        return total > DB_MAX ? null : out;
+      });
+    }).catch(function () { return null; });
+  }
+
+  function dump() {
+    var ls = {};
+    try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); ls[k] = localStorage.getItem(k); } } catch (e) {}
+    var list = indexedDB.databases ? indexedDB.databases() : Promise.resolve([]);
+    return list.catch(function () { return []; }).then(function (dbs) {
+      var names = dbs.map(function (d) { return d.name; }).filter(function (n) { return n && !SKIP.test(n); });
+      return Promise.all(names.map(dumpDb));
+    }).then(function (idb) {
+      return { ls: ls, idb: idb.filter(Boolean) };
+    });
+  }
+
+  dump().then(function (d) {
+    window.parent.postMessage({ xnSaves: 'dump', ls: d.ls, idb: d.idb }, parentOrigin);
+  }).catch(function () {
+    window.parent.postMessage({ xnSaves: 'dump', ls: {}, idb: [], error: true }, parentOrigin);
+  });
+})();
+</script>

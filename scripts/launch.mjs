@@ -23,6 +23,7 @@ import { appendFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { bunnyEnabled, pointZoneAt, zoneHostname } from '../backend/bunny.js';
 
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,6 +34,15 @@ const WP_USER   = process.env.WP_USER || '';
 const WP_PASS   = (process.env.WP_APP_PASSWORD || '').replace(/\s+/g, '');
 const WP_PAGE   = process.env.WP_ENDPOINT_PAGE || '171';
 const CAN_PUBLISH = Boolean(WP_USER && WP_PASS);
+
+/* A named Cloudflare tunnel has a fixed hostname on the user's own domain, so
+   there is nothing to discover or publish - the portal has it baked in. Set
+   both to use one instead of a quick tunnel. */
+const NAMED_TUNNEL = process.env.XENON_TUNNEL || '';
+const PUBLIC_URL = (process.env.XENON_PUBLIC_URL || '').replace(/\/+$/, '');
+// Optional cloudflared config with ingress rules, for serving more than one
+// hostname through the tunnel. Without it the tunnel points only at the proxy.
+const TUNNEL_CONFIG = process.env.XENON_TUNNEL_CONFIG || '';
 
 const TUNNEL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 // cloudflared keeps running after it loses the edge, so its process exiting is
@@ -132,19 +142,27 @@ function startTunnel() {
   missedBeats = 0;
   lastTunnelStart = Date.now();
 
-  tunnelProc = spawn(
-    cloudflaredBin(),
-    ['tunnel', '--url', `http://localhost:${PORT}`, '--no-autoupdate'],
-    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] },
-  );
+  const args = !NAMED_TUNNEL
+    ? ['tunnel', '--url', `http://localhost:${PORT}`, '--no-autoupdate']
+    : TUNNEL_CONFIG
+      ? ['tunnel', '--no-autoupdate', '--config', TUNNEL_CONFIG, 'run', NAMED_TUNNEL]
+      : ['tunnel', '--no-autoupdate', 'run', '--url', `http://localhost:${PORT}`, NAMED_TUNNEL];
+  tunnelProc = spawn(cloudflaredBin(), args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
 
   // cloudflared prints the URL on stderr, but it has moved between streams
   // across versions, so scan both.
   const scan = (chunk) => {
     const text = String(chunk);
     write(text.trimEnd());          // cloudflared's own diagnostics
-    const hit = text.match(TUNNEL_RE);
-    if (hit && !liveUrl) onTunnelUp(hit[0]);
+    if (NAMED_TUNNEL) {
+      if (!liveUrl && /Registered tunnel connection/i.test(text)) {
+        liveUrl = PUBLIC_URL;
+        log('tunnel connected - the proxy is at', PUBLIC_URL || '(set XENON_PUBLIC_URL)');
+      }
+    } else {
+      const hit = text.match(TUNNEL_RE);
+      if (hit && !liveUrl) onTunnelUp(hit[0]);
+    }
     if (DEAD_TUNNEL_RE.test(text)) onTunnelTrouble(text);
   };
   tunnelProc.stdout.on('data', scan);
@@ -195,8 +213,24 @@ async function onTunnelUp(url) {
     }
   }
 
-  await publish(url);
-  banner(url);
+  // With a Bunny pull zone in front, visitors should be given the stable
+  // b-cdn.net hostname - not this tunnel name, which changes every restart.
+  // Repoint the zone first, then publish the CDN address instead.
+  let advertise = url;
+  if (bunnyEnabled) {
+    const r = await pointZoneAt(url);
+    if (r.ok) {
+      log('bunny pull zone repointed at the new tunnel');
+      const host = await zoneHostname();
+      if (host) { advertise = host; log('advertising the CDN hostname:', host); }
+      else { log('could not read the zone hostname - advertising the tunnel instead'); }
+    } else {
+      log('bunny update failed (' + (r.status || r.error) + ') - advertising the tunnel instead');
+    }
+  }
+
+  await publish(advertise);
+  banner(advertise);
 }
 
 // cloudflared reported it lost the edge. Restart the tunnel, but never more

@@ -1,0 +1,1400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Xenon Studio</title>
+<link rel="icon" href="/brand/xenon-32.png" sizes="32x32">
+<link rel="icon" href="/brand/xenon-192.png" sizes="192x192">
+<style>
+:root{
+  --bg:#0a0f1a; --panel:rgba(14,22,38,.82); --line:rgba(150,185,255,.14);
+  --ink:#eef3ff; --dim:rgba(226,236,255,.5); --faint:rgba(226,236,255,.28);
+  --accent:#7aa2ff; --accent2:#b48bff; --rec:#ff5d6c;
+  --track-h:62px; --head-w:212px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.4 'Outfit',system-ui,-apple-system,sans-serif;
+  overflow:hidden;
+}
+button{font:inherit;color:inherit;cursor:pointer}
+
+/* ---- project picker: a coverflow ------------------------------------
+ * Cards sit on one axis with the middle one facing front and its neighbours
+ * turned away in 3D. perspective lives on the row, not the cards, so they
+ * share one vanishing point instead of each having its own.
+ */
+#projects{position:relative;display:flex;align-items:center;justify-content:center;
+  overflow:hidden;padding:2rem 1rem}
+#projects[hidden]{display:none !important}
+#main[hidden]{display:none !important}
+
+/* Blurred backdrop. A scaled-up copy of a wallpaper, blurred hard, so the
+   cards have something with depth behind them rather than flat colour. */
+#pbg{position:absolute;inset:-60px;z-index:0;
+  background:#0a0f1a url('/wp-content/uploads/2026/09/Red-Planet-opt.jpg') center/cover no-repeat;
+  filter:blur(46px) saturate(1.25) brightness(.5);transform:scale(1.12)}
+#pbg::after{content:'';position:absolute;inset:0;
+  background:radial-gradient(60% 60% at 50% 45%,rgba(10,15,26,.1),rgba(8,12,22,.86))}
+
+.pwrap{position:relative;z-index:1;width:100%;max-width:980px;text-align:center}
+.ptitle{font-size:clamp(1.6rem,4vw,2.4rem);font-weight:800;letter-spacing:-.025em;
+  margin:0 0 1.6rem;text-shadow:0 2px 30px rgba(0,0,0,.6)}
+
+.pflow{position:relative;height:300px;perspective:1500px;perspective-origin:50% 45%}
+.pcard{
+  position:absolute;left:50%;top:0;width:250px;height:290px;margin-left:-125px;
+  display:flex;flex-direction:column;justify-content:flex-end;
+  padding:1rem;border-radius:16px;text-align:left;
+  border:1px solid rgba(255,255,255,.14);
+  background:linear-gradient(170deg,rgba(30,44,74,.92),rgba(12,18,32,.95));
+  box-shadow:0 22px 60px rgba(0,0,0,.6);
+  transition:transform .45s cubic-bezier(.2,.8,.2,1),opacity .45s ease,filter .45s ease;
+  transform-style:preserve-3d;backface-visibility:hidden;will-change:transform;
+}
+/* The off-centre cards are dimmed and softened as well as turned - rotation
+   alone reads as flat cards at an angle, not as depth. */
+.pcard:not(.mid){filter:brightness(.62) saturate(.85);cursor:pointer}
+.pcard.mid{border-color:rgba(180,212,255,.55);box-shadow:0 26px 70px rgba(0,0,0,.72),
+  0 0 0 1px rgba(180,212,255,.2)}
+.pcard .pn{font-size:1.05rem;font-weight:700;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.pcard .pm{font-size:.66rem;color:rgba(226,236,255,.5);margin-top:.3rem}
+.pcard.new{align-items:center;justify-content:center;text-align:center;
+  border-style:dashed;border-color:rgba(150,185,255,.45);color:var(--accent);
+  font-weight:800;font-size:1.1rem;
+  background:linear-gradient(170deg,rgba(24,38,68,.9),rgba(10,16,30,.95))}
+.pdel{position:absolute;top:.6rem;right:.6rem;width:26px;height:26px;border-radius:8px;
+  border:1px solid rgba(255,255,255,.16);background:rgba(8,12,22,.8);
+  color:rgba(226,236,255,.6);font-size:.72rem;display:none;
+  align-items:center;justify-content:center}
+.pcard.mid:hover .pdel{display:inline-flex}
+.pdel:hover{color:var(--rec);border-color:var(--rec)}
+
+.parrow{position:absolute;top:50%;margin-top:-22px;z-index:5;width:44px;height:44px;
+  border-radius:50%;border:1px solid rgba(255,255,255,.18);
+  background:rgba(10,16,30,.7);backdrop-filter:blur(8px);font-size:1rem}
+.parrow:hover{background:rgba(40,60,100,.85)}
+.parrow.l{left:0} .parrow.r{right:0}
+.parrow[disabled]{opacity:.25;cursor:default}
+
+.pdots{display:flex;gap:.4rem;justify-content:center;margin-top:1.3rem}
+.pdot{width:7px;height:7px;border-radius:50%;border:0;padding:0;
+  background:rgba(226,236,255,.26)}
+.pdot.on{background:#eef3ff}
+.pback{display:inline-block;margin-top:1.4rem;font-size:.7rem;letter-spacing:.14em;
+  text-transform:uppercase;color:rgba(226,236,255,.45);text-decoration:none}
+.pback:hover{color:var(--ink)}
+.pempty{display:none}
+@media (prefers-reduced-motion:reduce){.pcard{transition:none}}
+
+/* ---- layout ---------------------------------------------------------- */
+#app{display:grid;grid-template-rows:auto 1fr;height:100vh}
+#main{display:grid;grid-template-columns:270px 1fr;min-height:0}
+
+/* ---- transport bar --------------------------------------------------- */
+#bar{
+  display:flex;align-items:center;gap:.7rem;padding:.6rem .9rem;
+  background:var(--panel);border-bottom:1px solid var(--line);
+  backdrop-filter:blur(12px);
+}
+#bar .brand{font-weight:800;letter-spacing:-.02em;font-size:1.05rem;margin-right:.4rem}
+#bar .brand span{color:var(--accent2)}
+.tbtn{
+  display:inline-flex;align-items:center;justify-content:center;gap:.4rem;
+  min-width:40px;height:34px;padding:0 .8rem;border-radius:999px;
+  border:1px solid var(--line);background:rgba(10,16,30,.6);
+}
+.tbtn:hover{background:rgba(40,60,100,.55)}
+.tbtn.on{background:var(--accent);border-color:var(--accent);color:#08101f;font-weight:700}
+.tbtn.rec.on{background:var(--rec);border-color:var(--rec);color:#fff}
+.field{display:inline-flex;align-items:center;gap:.4rem;font-size:.75rem;color:var(--dim)}
+.field input{
+  width:62px;height:34px;padding:0 .5rem;border-radius:9px;text-align:center;
+  border:1px solid var(--line);background:rgba(10,16,30,.6);color:var(--ink);font:inherit;
+}
+.spacer{flex:1 1 auto}
+#status{font-size:.72rem;color:var(--faint);white-space:nowrap}
+
+/* ---- sample browser -------------------------------------------------- */
+#side{
+  display:flex;flex-direction:column;min-height:0;
+  background:var(--panel);border-right:1px solid var(--line);
+}
+#search{
+  margin:.7rem;padding:.55rem .85rem;border-radius:999px;
+  border:1px solid var(--line);background:rgba(10,16,30,.6);color:var(--ink);
+  font:inherit;font-size:.82rem;outline:none;
+}
+#search:focus{border-color:rgba(180,212,255,.55)}
+#groups{display:flex;flex-wrap:wrap;gap:.3rem;padding:0 .7rem .5rem}
+.gchip{
+  padding:.25rem .6rem;border-radius:999px;font-size:.64rem;letter-spacing:.06em;
+  border:1px solid var(--line);background:rgba(10,16,30,.5);color:var(--dim);
+}
+.gchip.on{background:var(--accent);border-color:var(--accent);color:#08101f;font-weight:700}
+#list{flex:1 1 auto;overflow-y:auto;padding:0 .5rem .7rem}
+.samp{
+  display:flex;align-items:center;gap:.5rem;width:100%;
+  padding:.42rem .55rem;margin-bottom:.15rem;border-radius:9px;
+  border:1px solid transparent;background:none;text-align:left;font-size:.76rem;
+}
+.samp:hover{background:rgba(120,160,255,.12);border-color:var(--line)}
+.samp .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.samp .sz{flex:0 0 auto;font-size:.6rem;color:var(--faint)}
+.samp .play{flex:0 0 auto;font-size:.7rem;color:var(--faint)}
+.samp[draggable="true"]{cursor:grab}
+
+/* ---- timeline -------------------------------------------------------- */
+#stage{position:relative;overflow:auto;min-height:0;background:
+  linear-gradient(rgba(255,255,255,.02),rgba(255,255,255,0));}
+#ruler{
+  position:sticky;top:0;z-index:5;height:26px;margin-left:var(--head-w);
+  background:rgba(10,16,30,.92);border-bottom:1px solid var(--line);
+}
+.rmark{position:absolute;top:0;height:26px;border-left:1px solid rgba(150,185,255,.18);
+  padding-left:4px;font-size:.6rem;color:var(--faint);line-height:26px}
+#tracks{position:relative}
+.track{display:flex;width:max-content;min-width:100%;height:var(--track-h);border-bottom:1px solid rgba(150,185,255,.08)}
+.thead{
+  /* Sticky, because the lane scrolls sideways and the controls used to slide
+     off with it - once you scrolled out to a clip you could no longer reach
+     that track's mute, solo or volume. Opaque for the same reason: clips now
+     pass underneath it. */
+  flex:0 0 var(--head-w);width:var(--head-w);box-sizing:border-box;overflow:hidden;display:flex;align-items:center;gap:.3rem;padding:0 .5rem;
+  background:#0b1220;border-right:1px solid var(--line);
+  position:sticky;left:0;z-index:4;
+}
+.thead .tvol{flex:0 0 52px;width:52px;height:16px;accent-color:#7aa2ff;cursor:pointer}
+.field input[type=range]{width:70px;height:16px;accent-color:#7aa2ff;vertical-align:middle;cursor:pointer}
+.thead .tn{flex:1 1 auto;min-width:0;font-size:.7rem;color:var(--dim);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mini{width:24px;height:24px;border-radius:7px;border:1px solid var(--line);
+  background:rgba(10,16,30,.6);font-size:.6rem;display:inline-flex;
+  align-items:center;justify-content:center}
+.mini.on{background:var(--accent);border-color:var(--accent);color:#08101f}
+.lane{position:relative;flex:0 0 auto;min-width:0}
+.lane.over{background:rgba(120,160,255,.09)}
+
+.clip{
+  position:absolute;top:6px;height:calc(var(--track-h) - 14px);
+  border-radius:8px;overflow:hidden;cursor:grab;
+  background:linear-gradient(180deg,rgba(122,162,255,.5),rgba(122,162,255,.26));
+  border:1px solid rgba(180,210,255,.5);
+}
+.clip.sel{border-color:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.5)}
+.clip.rec{background:linear-gradient(180deg,rgba(255,93,108,.5),rgba(255,93,108,.26));
+  border-color:rgba(255,160,170,.6)}
+.clip .cl{position:absolute;left:5px;top:3px;right:5px;font-size:.6rem;
+  color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
+.clip canvas{position:absolute;left:0;bottom:0;width:100%;height:64%;opacity:.75;pointer-events:none}
+.grip{position:absolute;top:0;width:8px;height:100%;cursor:ew-resize;z-index:2}
+.grip.l{left:0} .grip.r{right:0}
+.grip:hover{background:rgba(255,255,255,.28)}
+
+#playhead{position:absolute;top:0;width:2px;background:#fff;
+  box-shadow:0 0 8px rgba(255,255,255,.8);pointer-events:none;z-index:6;display:none}
+
+#empty{position:absolute;left:calc(var(--head-w) + 30px);top:70px;
+  font-size:.8rem;color:var(--faint);pointer-events:none;max-width:420px;line-height:1.6}
+
+/* In-page dialog. The site frames Studio in a sandbox without allow-modals,
+   where Chrome silently cancels prompt() and confirm(): New Project, Clear
+   and Delete all did nothing. */
+.dlg{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(2,4,10,.6)}
+.dlg[hidden]{display:none}
+.dlg-box{width:min(360px,calc(100vw - 32px));padding:1.2rem;border-radius:16px;background:#0c1426;border:1px solid rgba(170,205,255,.25);box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.dlg-box p{margin:0 0 .8rem;font-size:.9rem;color:var(--ink)}
+.dlg-box input{width:100%;box-sizing:border-box;margin-bottom:.9rem;padding:.55rem .7rem;border-radius:9px;border:1px solid rgba(170,205,255,.3);background:rgba(0,0,0,.35);color:var(--ink);font:inherit}
+.dlg-btns{display:flex;justify-content:flex-end;gap:.5rem}
+.dlg-btns button{padding:.45rem 1rem;border-radius:999px;border:1px solid rgba(170,205,255,.3);background:transparent;color:var(--ink);font:inherit;cursor:pointer}
+.dlg-btns button.ok{background:#3b6fd8;border-color:#3b6fd8}
+/* collab */
+#collab.on{border-color:rgba(122,224,164,.6);color:#c9ffe0}
+.csub{margin:.2rem 0 .7rem;font-size:.74rem;color:var(--faint)}
+.crow{display:flex;gap:.4rem;margin-bottom:.8rem}
+.crow input{margin:0;font-family:monospace;font-size:.72rem}
+.crow button{flex:0 0 auto;padding:.45rem .9rem;border-radius:999px;border:1px solid rgba(170,205,255,.3);background:#3b6fd8;color:#fff;font:inherit;cursor:pointer}
+.cname{display:block;font-size:.72rem;color:var(--faint);margin-bottom:.8rem}
+.cname input{margin:.3rem 0 0}
+.cpeople{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.9rem}
+.cpeople span{display:inline-flex;align-items:center;gap:.35rem;padding:.25rem .65rem;border-radius:999px;background:rgba(255,255,255,.06);font-size:.74rem}
+.cpeople i{width:8px;height:8px;border-radius:50%}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="bar">
+    <button class="tbtn" id="back" title="Back to your projects">&#8592;</button>
+    <div class="brand">xenon <span>studio</span></div>
+    <button class="tbtn" id="play" title="Play / stop (Space)">&#9654;</button>
+    <button class="tbtn" id="stop" title="Back to start">&#9632;</button>
+    <button class="tbtn rec" id="rec" title="Record from your microphone">&#9679; Rec</button>
+    <label class="field">BPM <input id="bpm" type="number" min="40" max="220" value="130"></label>
+    <label class="field">Vol <input id="mvol" type="range" min="0" max="1" step="0.01" value="0.8" title="Master volume"></label>
+    <label class="field">Bars <input id="bars" type="number" min="4" max="256" value="64"></label>
+    <button class="tbtn" id="loop" title="Loop the arrangement">Loop</button>
+    <button class="tbtn" id="addtrack" title="Add a track">+ Track</button>
+    <button class="tbtn" id="collab" title="Make this project with friends, live">&#128101; Collab</button>
+    <div class="spacer"></div>
+    <span id="status">loading samples...</span>
+    <button class="tbtn" id="clear" title="Remove every clip">Clear</button>
+  </div>
+
+  <div id="projects">
+    <div id="pbg"></div>
+    <div class="pwrap">
+      <h1 class="ptitle">your projects</h1>
+      <div class="pflow" id="plist">
+        <button class="parrow l" id="pprev" type="button" title="Previous">&#8249;</button>
+        <button class="parrow r" id="pnext" type="button" title="Next">&#8250;</button>
+      </div>
+      <div class="pdots" id="pdots"></div>
+      <a class="pback" id="pback" href="/">&#8592; back to xenon</a>
+    </div>
+  </div>
+
+  <div class="dlg" id="cdlg" hidden>
+    <div class="dlg-box">
+      <p><b>&#128101; Collab</b></p>
+      <p class="csub" id="cdlg-sub">Send this link. Everyone who opens it edits this project with you, live.</p>
+      <div class="crow"><input id="cdlg-link" type="text" readonly><button type="button" id="cdlg-copy">Copy</button></div>
+      <label class="cname">Your name<input id="cdlg-name" type="text" maxlength="30" spellcheck="false"></label>
+      <div class="cpeople" id="cdlg-people"></div>
+      <div class="dlg-btns">
+        <button type="button" id="cdlg-leave">Stop collab</button>
+        <button type="button" class="ok" id="cdlg-close">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dlg" id="dlg" hidden>
+    <form class="dlg-box" id="dlg-form">
+      <p id="dlg-text"></p>
+      <input id="dlg-input" type="text" spellcheck="false" maxlength="60">
+      <div class="dlg-btns">
+        <button type="button" id="dlg-no">Cancel</button>
+        <button type="submit" class="ok" id="dlg-ok">OK</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="main" hidden>
+    <div id="side">
+      <input id="search" type="text" placeholder="Search 143 samples..." spellcheck="false">
+      <div id="groups"></div>
+      <div id="list"></div>
+    </div>
+
+    <div id="stage">
+      <div id="ruler"></div>
+      <div id="tracks"></div>
+      <div id="playhead"></div>
+      <div id="empty">
+        Drag a sample from the left onto a track.<br>
+        Click a clip to select it, drag its edges to trim, press Delete to remove it.<br>
+        Space plays and stops.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+'use strict';
+
+/* ------------------------------------------------------------------ state */
+var PX_PER_BEAT = 42;          // timeline zoom
+var BEATS_PER_BAR = 4;
+var ctx = null;                // AudioContext, created on first gesture
+var buffers = {};              // path -> AudioBuffer, decoded once and kept
+var samples = [];              // the pack index
+var tracks = [];               // [{ id, name, mute, clips: [] }]
+var nextId = 1;
+/* Ids are random strings, so tracks and clips made in two browsers at once
+   never clash in a collab room. */
+function uid() {
+  var a = 'abcdefghijkmnpqrstuvwxyz23456789', s = '';
+  var b = crypto.getRandomValues(new Uint8Array(12));
+  for (var i = 0; i < 12; i++) s += a[b[i] % a.length];
+  return s;
+}
+var playing = false;
+var startedAt = 0;             // ctx time when playback began
+var playFrom = 0;              // beat position playback began from
+var live = [];                 // currently scheduled sources, so stop() works
+var selected = null;
+var recorder = null, recChunks = [], recTrack = null, recStartBeat = 0;
+
+var el = function (id) { return document.getElementById(id); };
+var stage = el('stage'), lane0 = el('tracks'), ruler = el('ruler');
+var statusEl = el('status'), playhead = el('playhead');
+
+function bpm() { return Math.max(40, Math.min(220, Number(el('bpm').value) || 130)); }
+function bars() { return Math.max(4, Math.min(256, Number(el('bars').value) || 64)); }
+function secPerBeat() { return 60 / bpm(); }
+function totalBeats() { return bars() * BEATS_PER_BAR; }
+function say(t) { statusEl.textContent = t; }
+
+/* The AudioContext has to be created inside a user gesture or it starts
+   suspended and nothing plays, so every entry point calls this first. */
+var master = null;      // everything is summed here
+var limiter = null;     // catches what is left over
+
+/* Every clip used to connect straight to ctx.destination at full volume.
+   These samples are finished loops, not one-shots, so two of them together
+   already sum past 1.0 and the browser hard-clips the result - which is why
+   stacking a few beats sounded like one distorted wall rather than a mix.
+   Output stage: track gain -> master gain -> limiter -> speakers. */
+function audio() {
+  if (!ctx) {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    limiter = ctx.createDynamicsCompressor();
+    /* A limiter, not a compressor: high ratio, low knee, fast attack, so it
+       only touches peaks that would have clipped and leaves the rest alone. */
+    limiter.threshold.value = -3;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.25;
+    limiter.connect(ctx.destination);
+    master = ctx.createGain();
+    master.gain.value = 0.8;
+    master.connect(limiter);
+  }
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+
+/* One gain per track, made on demand and kept on the track itself so it
+   survives redraws (drawTracks rebuilds the DOM on every change). */
+function trackGain(t) {
+  audio();
+  if (!t.gain) {
+    t.gain = ctx.createGain();
+    t.gain.connect(master);
+  }
+  var soloing = tracks.some(function (x) { return x.solo; });
+  var on = t.mute ? false : (soloing ? !!t.solo : true);
+  var want = on ? (typeof t.vol === 'number' ? t.vol : 0.8) : 0;
+  /* Ramp rather than jump: setting .value mid-playback steps the waveform and
+     clicks audibly. */
+  t.gain.gain.setTargetAtTime(want, ctx.currentTime, 0.01);
+  return t.gain;
+}
+
+/* Solo and mute are relative to every other track, so one change has to
+   re-evaluate all of them. */
+function applyGains() {
+  tracks.forEach(function (t) { if (t.gain) trackGain(t); });
+}
+
+/* ------------------------------------------------------------- sample list */
+var activeGroup = 'ALL';
+
+function loadIndex() {
+  fetch('/studio/samples.json', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (a) {
+      samples = a || [];
+      el('search').placeholder = 'Search ' + samples.length + ' samples...';
+      var groups = ['ALL'];
+      samples.forEach(function (s) { if (groups.indexOf(s.g) < 0) groups.push(s.g); });
+      var gwrap = el('groups');
+      gwrap.textContent = '';
+      groups.forEach(function (g) {
+        var b = document.createElement('button');
+        b.className = 'gchip' + (g === 'ALL' ? ' on' : '');
+        b.textContent = g;
+        b.addEventListener('click', function () {
+          activeGroup = g;
+          [].forEach.call(gwrap.children, function (c) { c.classList.toggle('on', c === b); });
+          drawList();
+        });
+        gwrap.appendChild(b);
+      });
+      drawList();
+      say(samples.length + ' samples ready');
+    })
+    .catch(function () { say('could not load the sample index'); });
+}
+
+function drawList() {
+  var q = el('search').value.trim().toLowerCase();
+  var list = el('list');
+  list.textContent = '';
+  var shown = 0;
+  samples.forEach(function (s) {
+    if (activeGroup !== 'ALL' && s.g !== activeGroup) return;
+    if (q && s.n.toLowerCase().indexOf(q) < 0) return;
+    shown++;
+    var b = document.createElement('button');
+    b.className = 'samp';
+    b.draggable = true;
+    b.title = s.p;
+    var pl = document.createElement('span'); pl.className = 'play'; pl.textContent = '▶';
+    var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = s.n;
+    var sz = document.createElement('span'); sz.className = 'sz'; sz.textContent = s.kb + 'k';
+    b.appendChild(pl); b.appendChild(nm); b.appendChild(sz);
+    b.addEventListener('click', function () { preview(s); });
+    b.addEventListener('dragstart', function (ev) {
+      ev.dataTransfer.setData('text/plain', s.p);
+      ev.dataTransfer.effectAllowed = 'copy';
+    });
+    list.appendChild(b);
+  });
+  if (!shown) {
+    var p = document.createElement('p');
+    p.style.cssText = 'padding:1rem .6rem;color:var(--faint);font-size:.75rem';
+    p.textContent = 'nothing matches that';
+    list.appendChild(p);
+  }
+}
+
+/* Decode once and keep. These are full loops, up to a couple of megabytes,
+   so re-fetching on every placement would be painful over a home connection. */
+function getBuffer(p) {
+  if (buffers[p]) return Promise.resolve(buffers[p]);
+  return fetch(p.indexOf('collab:') === 0 ? '/studio/collab-audio/' + p.slice(7) : '/studio/sample?p=' + encodeURIComponent(p))
+    .then(function (r) {
+      if (!r.ok) throw new Error('sample ' + r.status);
+      return r.arrayBuffer();
+    })
+    .then(function (ab) { return audio().decodeAudioData(ab); })
+    .then(function (buf) { buffers[p] = buf; return buf; });
+}
+
+function preview(s) {
+  audio();
+  say('loading ' + s.n + '...');
+  getBuffer(s.p).then(function (buf) {
+    var src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(master);          // preview bypasses tracks, still limited
+    src.start();
+    say(s.n + '  ' + buf.duration.toFixed(2) + 's');
+  }).catch(function (e) { say('could not play that: ' + e.message); });
+}
+
+/* ----------------------------------------------------------------- tracks */
+function addTrack(name, quiet) {
+  var t = { id: uid(), name: name || ('Track ' + (tracks.length + 1)), mute: false, clips: [] };
+  tracks.push(t);
+  if (!quiet) emit({ k: 'addTrack', track: wireTrack(t) });
+  drawTracks();
+  return t;
+}
+
+function drawRuler() {
+  ruler.textContent = '';
+  ruler.style.width = (totalBeats() * PX_PER_BEAT) + 'px';
+  for (var b = 0; b < bars(); b++) {
+    var m = document.createElement('div');
+    m.className = 'rmark';
+    m.style.left = (b * BEATS_PER_BAR * PX_PER_BEAT) + 'px';
+    m.textContent = (b + 1);
+    ruler.appendChild(m);
+  }
+}
+
+function drawTracks() {
+  drawRuler();
+  lane0.textContent = '';
+  var width = totalBeats() * PX_PER_BEAT;
+  tracks.forEach(function (t) {
+    var row = document.createElement('div');
+    row.className = 'track';
+
+    var head = document.createElement('div');
+    head.className = 'thead';
+    var nm = document.createElement('span'); nm.className = 'tn'; nm.textContent = t.name;
+    var mute = document.createElement('button');
+    mute.className = 'mini' + (t.mute ? ' on' : '');
+    mute.textContent = 'M';
+    mute.title = 'Mute';
+    mute.addEventListener('click', function () {
+      t.mute = !t.mute;
+      emit({ k: 'setTrack', id: t.id, props: { mute: t.mute } });
+      applyGains();                 // takes effect mid-playback, not on restart
+      drawTracks();
+    });
+    var vol = document.createElement('input');
+    vol.type = 'range'; vol.className = 'tvol';
+    vol.min = '0'; vol.max = '1'; vol.step = '0.01';
+    vol.value = String(typeof t.vol === 'number' ? t.vol : 0.8);
+    vol.title = 'Track volume';
+    vol.addEventListener('input', function () {
+      t.vol = Number(vol.value);
+      if (t.gain) trackGain(t);   // this track only - no need to touch the rest
+    });
+    /* Shared once the slider is let go, not on every step of the drag. */
+    vol.addEventListener('change', function () { emit({ k: 'setTrack', id: t.id, props: { vol: t.vol } }); });
+    /* Solo: the samples are finished beats rather than layers, so stacking
+       them buries all but the loudest. This is the quickest way to hear what
+       is actually on a track. */
+    var solo = document.createElement('button');
+    solo.className = 'mini' + (t.solo ? ' on' : '');
+    solo.textContent = 'S';
+    solo.title = 'Solo';
+    solo.addEventListener('click', function () {
+      t.solo = !t.solo;
+      emit({ k: 'setTrack', id: t.id, props: { solo: t.solo } });
+      applyGains();
+      drawTracks();
+    });
+    var del = document.createElement('button');
+    del.className = 'mini'; del.textContent = '×'; del.title = 'Delete track';
+    del.addEventListener('click', function () {
+      tracks = tracks.filter(function (x) { return x !== t; });
+      emit({ k: 'delTrack', id: t.id });
+      drawTracks();
+    });
+    head.appendChild(nm); head.appendChild(vol);
+    head.appendChild(solo); head.appendChild(mute); head.appendChild(del);
+
+    var lane = document.createElement('div');
+    lane.className = 'lane';
+    lane.style.width = width + 'px';
+
+    lane.addEventListener('dragover', function (ev) {
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'copy';
+      lane.classList.add('over');
+    });
+    lane.addEventListener('dragleave', function () { lane.classList.remove('over'); });
+    lane.addEventListener('drop', function (ev) {
+      ev.preventDefault();
+      lane.classList.remove('over');
+      var p = ev.dataTransfer.getData('text/plain');
+      if (!p) return;
+      var rect = lane.getBoundingClientRect();
+      var beat = Math.max(0, Math.round((ev.clientX - rect.left) / PX_PER_BEAT * 2) / 2);
+      place(t, p, beat);
+    });
+
+    t.clips.forEach(function (c) { lane.appendChild(clipEl(t, c)); });
+
+    row.appendChild(head); row.appendChild(lane);
+    lane0.appendChild(row);
+  });
+  el('empty').style.display = tracks.some(function (t) { return t.clips.length; }) ? 'none' : 'block';
+}
+
+function place(track, path, beat) {
+  audio();
+  say('loading...');
+  getBuffer(path).then(function (buf) {
+    var s = samples.filter(function (x) { return x.p === path; })[0];
+    var c = {
+      id: uid(), path: path, name: s ? s.n : path.split('/').pop(),
+      start: beat, offset: 0, dur: buf.duration, full: buf.duration, rec: false,
+    };
+    track.clips.push(c);
+    emit({ k: 'addClip', track: track.id, clip: wireClip(c) });
+    drawTracks();
+    say('placed ' + (s ? s.n : ''));
+  }).catch(function (e) { say('could not load that sample: ' + e.message); });
+}
+
+function clipEl(track, c) {
+  var d = document.createElement('div');
+  d.className = 'clip' + (c.rec ? ' rec' : '') + (selected === c ? ' sel' : '');
+  var beats = c.dur / secPerBeat();
+  d.style.left = (c.start * PX_PER_BEAT) + 'px';
+  d.style.width = Math.max(14, beats * PX_PER_BEAT) + 'px';
+
+  var lab = document.createElement('div'); lab.className = 'cl'; lab.textContent = c.name;
+  d.appendChild(lab);
+
+  var cv = document.createElement('canvas');
+  d.appendChild(cv);
+  drawWave(cv, c);
+
+  ['l', 'r'].forEach(function (side) {
+    var g = document.createElement('div');
+    g.className = 'grip ' + side;
+    g.addEventListener('mousedown', function (ev) { startTrim(ev, track, c, side); });
+    d.appendChild(g);
+  });
+
+  d.addEventListener('mousedown', function (ev) {
+    if (ev.target.classList.contains('grip')) return;
+    selected = c;
+    drawTracks();
+    startMove(ev, track, c);
+  });
+
+  return d;
+}
+
+/* A cheap peak-per-column waveform. Full sample-accurate drawing on a 2MB
+   loop would block the main thread for longer than the picture is worth. */
+function drawWave(cv, c) {
+  var buf = buffers[c.path];
+  if (!buf) return;
+  var w = Math.max(14, (c.dur / secPerBeat()) * PX_PER_BEAT);
+  cv.width = Math.min(1200, Math.round(w));
+  cv.height = 40;
+  var g = cv.getContext('2d');
+  var data = buf.getChannelData(0);
+  var from = Math.floor(c.offset * buf.sampleRate);
+  var len = Math.floor(c.dur * buf.sampleRate);
+  var step = Math.max(1, Math.floor(len / cv.width));
+  g.fillStyle = 'rgba(255,255,255,.85)';
+  for (var x = 0; x < cv.width; x++) {
+    var peak = 0;
+    var base = from + x * step;
+    for (var i = 0; i < step; i += 16) {
+      var v = Math.abs(data[base + i] || 0);
+      if (v > peak) peak = v;
+    }
+    var h = Math.max(1, peak * cv.height);
+    g.fillRect(x, (cv.height - h) / 2, 1, h);
+  }
+}
+
+/* ------------------------------------------------------------ move / trim */
+function startMove(ev, track, c) {
+  ev.preventDefault();
+  var x0 = ev.clientX, s0 = c.start;
+  dragging = c.id;
+  var share = throttle(function () { emit({ k: 'setClip', id: c.id, props: { start: c.start } }); }, 120);
+  function mv(e) {
+    var d = (e.clientX - x0) / PX_PER_BEAT;
+    c.start = Math.max(0, Math.round((s0 + d) * 2) / 2);
+    share();
+    drawTracks();
+  }
+  function up() {
+    document.removeEventListener('mousemove', mv);
+    document.removeEventListener('mouseup', up);
+    if (c.start !== s0) emit({ k: 'setClip', id: c.id, props: { start: c.start } });
+    endDrag(c.id);
+  }
+  document.addEventListener('mousemove', mv);
+  document.addEventListener('mouseup', up);
+}
+
+function startTrim(ev, track, c, side) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  var x0 = ev.clientX, off0 = c.offset, dur0 = c.dur, st0 = c.start;
+  dragging = c.id;
+  var share = throttle(function () { emit({ k: 'setClip', id: c.id, props: { start: c.start, offset: c.offset, dur: c.dur } }); }, 120);
+  function mv(e) {
+    var dBeats = (e.clientX - x0) / PX_PER_BEAT;
+    var dSec = dBeats * secPerBeat();
+    if (side === 'r') {
+      c.dur = Math.max(0.05, Math.min(c.full - c.offset, dur0 + dSec));
+    } else {
+      /* Dragging the left edge moves the start AND the read offset together,
+         so the audio under the cursor stays put instead of sliding. */
+      var want = Math.max(0, Math.min(off0 + dur0 - 0.05, off0 + dSec));
+      var moved = want - off0;
+      c.offset = want;
+      c.dur = Math.max(0.05, dur0 - moved);
+      c.start = Math.max(0, st0 + moved / secPerBeat());
+    }
+    share();
+    drawTracks();
+    say(c.name + '  ' + c.dur.toFixed(2) + 's');
+  }
+  function up() {
+    document.removeEventListener('mousemove', mv);
+    document.removeEventListener('mouseup', up);
+    emit({ k: 'setClip', id: c.id, props: { start: c.start, offset: c.offset, dur: c.dur } });
+    endDrag(c.id);
+  }
+  document.addEventListener('mousemove', mv);
+  document.addEventListener('mouseup', up);
+}
+
+/* -------------------------------------------------------------- transport */
+function schedule(fromBeat) {
+  var t0 = ctx.currentTime + 0.06;   // a beat of headroom so nothing is late
+  tracks.forEach(function (t) {
+    if (t.mute) return;
+    t.clips.forEach(function (c) {
+      var when = (c.start - fromBeat) * secPerBeat();
+      if (when + c.dur <= 0) return;             // already finished
+      var buf = buffers[c.path];
+      if (!buf) return;
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(trackGain(t));
+      if (when >= 0) src.start(t0 + when, c.offset, c.dur);
+      else src.start(t0, c.offset - when, c.dur + when);  // mid-clip start
+      live.push(src);
+    });
+  });
+}
+
+function play() {
+  audio();
+  if (playing) { stop(false); return; }
+  live = [];
+  playing = true;
+  playFrom = 0;
+  startedAt = ctx.currentTime;
+  schedule(playFrom);
+  el('play').classList.add('on');
+  el('play').innerHTML = '&#10074;&#10074;';
+  playhead.style.display = 'block';
+  playhead.style.height = lane0.scrollHeight + 'px';
+  requestAnimationFrame(tick);
+}
+
+function stop(toStart) {
+  playing = false;
+  live.forEach(function (s) { try { s.stop(); } catch (e) {} });
+  live = [];
+  el('play').classList.remove('on');
+  el('play').innerHTML = '&#9654;';
+  if (toStart !== false) playhead.style.display = 'none';
+}
+
+function tick() {
+  if (!playing) return;
+  var beat = playFrom + (ctx.currentTime - startedAt) / secPerBeat();
+  if (beat >= totalBeats()) {
+    if (el('loop').classList.contains('on')) {
+      stop(false);
+      play();
+      return;
+    }
+    stop(true);
+    return;
+  }
+  playhead.style.left = (180 + beat * PX_PER_BEAT - stage.scrollLeft) + 'px';
+  requestAnimationFrame(tick);
+}
+
+/* ------------------------------------------------------------- recording */
+function toggleRec() {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+  audio();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    say('this browser will not give a page microphone access');
+    return;
+  }
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+    recChunks = [];
+    recorder = new MediaRecorder(stream);
+    recTrack = addTrack('Voice ' + (tracks.length + 1));
+    recStartBeat = playing ? playFrom + (ctx.currentTime - startedAt) / secPerBeat() : 0;
+    recorder.ondataavailable = function (e) { if (e.data.size) recChunks.push(e.data); };
+    recorder.onstop = function () {
+      stream.getTracks().forEach(function (t) { t.stop(); });
+      el('rec').classList.remove('on');
+      var blob = new Blob(recChunks, { type: recorder.mimeType || 'audio/webm' });
+      blob.arrayBuffer()
+        .then(function (ab) { return audio().decodeAudioData(ab); })
+        .then(function (buf) {
+          var finish = function (key, note) {
+            buffers[key] = buf;
+            var c = {
+              id: uid(), path: key, name: 'Recording ' + new Date().toLocaleTimeString(),
+              start: Math.max(0, Math.round(recStartBeat * 2) / 2),
+              offset: 0, dur: buf.duration, full: buf.duration, rec: true,
+            };
+            recTrack.clips.push(c);
+            if (key.indexOf('collab:') === 0) emit({ k: 'addClip', track: recTrack.id, clip: wireClip(c) });
+            drawTracks();
+            say(note || ('recorded ' + buf.duration.toFixed(2) + 's'));
+          };
+          if (!room) { finish('rec:' + uid()); return; }
+          say('sharing the recording with the room...');
+          fetch('/api/studio/rooms/' + room.code + '/audio', { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+              if (j.ok) finish(j.path, 'recorded and shared with the room');
+              else finish('rec:' + uid(), 'recorded - only you can hear it (' + j.why + ')');
+            })
+            .catch(function () { finish('rec:' + uid(), 'recorded - only you can hear it'); });
+        })
+        .catch(function (e) { say('could not decode the recording: ' + e.message); });
+    };
+    recorder.start();
+    el('rec').classList.add('on');
+    say('recording... click Rec again to stop');
+  }).catch(function (e) {
+    say('microphone refused: ' + (e.name === 'NotAllowedError' ? 'permission denied' : e.message));
+  });
+}
+
+/* ------------------------------------------------------------------ wiring */
+el('play').addEventListener('click', play);
+el('stop').addEventListener('click', function () { stop(true); });
+el('rec').addEventListener('click', toggleRec);
+el('loop').addEventListener('click', function () { this.classList.toggle('on'); });
+el('addtrack').addEventListener('click', function () { addTrack(); });
+el('clear').addEventListener('click', function () {
+  ask('Remove every clip?', null, function () {
+    tracks.forEach(function (t) { t.clips = []; });
+    emit({ k: 'clear' });
+    selected = null;
+    drawTracks();
+  });
+});
+el('search').addEventListener('input', drawList);
+el('bpm').addEventListener('change', drawTracks);
+el('bpm').addEventListener('change', function () { emit({ k: 'setSong', bpm: bpm() }); });
+el('mvol').addEventListener('input', function () {
+  audio();
+  master.gain.value = Number(el('mvol').value);
+});
+el('bars').addEventListener('change', drawTracks);
+el('bars').addEventListener('change', function () { emit({ k: 'setSong', bars: bars() }); });
+
+document.addEventListener('keydown', function (e) {
+  var tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea') return;
+  if (e.code === 'Space') { e.preventDefault(); play(); }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (!selected) return;
+    emit({ k: 'delClip', id: selected.id });
+    tracks.forEach(function (t) {
+      t.clips = t.clips.filter(function (c) { return c !== selected; });
+    });
+    selected = null;
+    drawTracks();
+  }
+});
+
+/* ------------------------------------------------------------- collab */
+/* Live editing with others in a room (server: backend/routes/studio-collab.js).
+   Every change here is sent as a small op; every op the server relays -
+   including our own, in the server's order - is applied, so all copies agree.
+   A clip being dragged here ignores echoes of its own drag until let go. */
+var room = null;        // { code, name } while connected
+var sock = null;
+var meId = null;
+var people = [];
+var applying = false;
+var dragging = null;
+var dropTimer = null;
+var tries = 0;
+
+function throttle(fn, ms) {
+  var last = 0, timer = null;
+  return function () {
+    var now = Date.now();
+    if (now - last >= ms) { last = now; fn(); }
+    else if (!timer) { timer = setTimeout(function () { timer = null; last = Date.now(); fn(); }, ms - (now - last)); }
+  };
+}
+function endDrag(id) {
+  clearTimeout(dropTimer);
+  dropTimer = setTimeout(function () { if (dragging === id) dragging = null; }, 800);
+}
+function wireClip(c) {
+  return { id: c.id, path: c.path, name: c.name, start: c.start, offset: c.offset, dur: c.dur, full: c.full };
+}
+function wireTrack(t) {
+  return { id: t.id, name: t.name, mute: !!t.mute, solo: !!t.solo,
+           vol: typeof t.vol === 'number' ? t.vol : 0.8,
+           clips: t.clips.filter(function (c) { return !c.rec || String(c.path).indexOf('collab:') === 0; }).map(wireClip) };
+}
+function wireState() { return { bpm: bpm(), bars: bars(), tracks: tracks.map(wireTrack) }; }
+function emit(op) {
+  if (!room || applying) return;
+  if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: 'op', op: op }));
+}
+function myName() {
+  var n = '';
+  try { n = localStorage.getItem('xs-name') || ''; } catch (e) {}
+  if (!n) { n = 'guest-' + Math.floor(1000 + Math.random() * 9000); try { localStorage.setItem('xs-name', n); } catch (e) {} }
+  return n;
+}
+function findTrack(id) { return tracks.filter(function (x) { return x.id === id; })[0] || null; }
+function findClip(id) {
+  for (var i = 0; i < tracks.length; i++) {
+    for (var j = 0; j < tracks[i].clips.length; j++) if (tracks[i].clips[j].id === id) return { t: tracks[i], c: tracks[i].clips[j] };
+  }
+  return null;
+}
+function fromWire(c) {
+  return { id: c.id, path: c.path, name: c.name, start: c.start, offset: c.offset, dur: c.dur, full: c.full, rec: String(c.path).indexOf('collab:') === 0 };
+}
+function fetchPaths(list) {
+  var need = list.filter(function (p) { return !buffers[p]; });
+  if (!need.length) return;
+  audio();
+  Promise.all(need.map(function (p) { return getBuffer(p).catch(function () {}); })).then(function () { drawTracks(); });
+}
+var redraw = throttle(function () { drawTracks(); }, 60);
+
+function loadState(st) {
+  applying = true;
+  try {
+    el('bpm').value = st.bpm;
+    el('bars').value = st.bars;
+    tracks = st.tracks.map(function (t) {
+      return { id: t.id, name: t.name, mute: !!t.mute, solo: !!t.solo, vol: t.vol, clips: t.clips.map(fromWire) };
+    });
+    selected = null;
+  } finally { applying = false; }
+  var paths = [];
+  tracks.forEach(function (t) { t.clips.forEach(function (c) { paths.push(c.path); }); });
+  drawTracks();
+  fetchPaths(paths);
+}
+
+function applyOp(op, by) {
+  applying = true;
+  try {
+    var f;
+    if (op.k === 'addTrack') {
+      if (!findTrack(op.track.id)) tracks.push({ id: op.track.id, name: op.track.name, mute: !!op.track.mute, solo: !!op.track.solo, vol: op.track.vol, clips: op.track.clips.map(fromWire) });
+    } else if (op.k === 'delTrack') {
+      tracks = tracks.filter(function (x) { return x.id !== op.id; });
+    } else if (op.k === 'setTrack') {
+      var t = findTrack(op.id);
+      if (t) { for (var k in op.props) t[k] = op.props[k]; if (playing) applyGains(); }
+    } else if (op.k === 'addClip') {
+      var tr = findTrack(op.track);
+      if (tr && !findClip(op.clip.id)) { tr.clips.push(fromWire(op.clip)); fetchPaths([op.clip.path]); }
+    } else if (op.k === 'setClip') {
+      f = findClip(op.id);
+      if (f && !(dragging === op.id && by === meId)) { for (var k2 in op.props) f.c[k2] = op.props[k2]; }
+    } else if (op.k === 'delClip') {
+      f = findClip(op.id);
+      if (f) { f.t.clips = f.t.clips.filter(function (c) { return c.id !== op.id; }); if (selected === f.c) selected = null; }
+    } else if (op.k === 'setSong') {
+      if ('bpm' in op) el('bpm').value = op.bpm;
+      if ('bars' in op) el('bars').value = op.bars;
+    } else if (op.k === 'clear') {
+      tracks.forEach(function (x) { x.clips = []; });
+      selected = null;
+    }
+  } finally { applying = false; }
+  redraw();
+}
+
+function connect(code) {
+  disconnect();
+  var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host +
+    '/studio-collab?room=' + encodeURIComponent(code) + '&name=' + encodeURIComponent(myName());
+  var s = new WebSocket(url);
+  sock = s;
+  s.onmessage = function (e) {
+    if (sock !== s) return;
+    var m;
+    try { m = JSON.parse(e.data); } catch (x) { return; }
+    if (m.t === 'hello') {
+      tries = 0;
+      meId = m.you;
+      room = m.room;
+      people = m.members;
+      loadState(m.state);
+      if (current) { current.name = m.room.name; }
+      saveCurrent();
+      paintCollab();
+      say('collab on - ' + people.length + (people.length === 1 ? ' person' : ' people') + ' here');
+    } else if (m.t === 'op') {
+      applyOp(m.op, m.by);
+    } else if (m.t === 'members') {
+      people = m.members;
+      paintCollab();
+      if (m.joined) say(m.joined + ' joined');
+      if (m.left) say(m.left + ' left');
+    } else if (m.t === 'room') {
+      if (room) room.name = m.name;
+    }
+  };
+  s.onclose = function () {
+    if (sock !== s) return;
+    sock = null;
+    var was = room;
+    room = null;
+    paintCollab();
+    if (!current || current.room !== code) return;
+    tries++;
+    /* A room that keeps refusing is gone (deleted after two weeks unused). */
+    if (tries > 4) {
+      say('that collab room no longer exists - this is your own copy now');
+      current.room = null;
+      persistRoom(null);
+      return;
+    }
+    say(was ? 'collab connection lost - reconnecting...' : 'connecting to the room...');
+    setTimeout(function () { if (current && current.room === code && !sock) connect(code); }, 1500 * tries);
+  };
+}
+function disconnect() {
+  if (sock) { var s = sock; sock = null; try { s.close(); } catch (e) {} }
+  room = null;
+  people = [];
+  paintCollab();
+}
+function persistRoom(code) {
+  if (!current) return;
+  var list = readProjects();
+  var i = list.findIndex(function (p) { return p.id === current.id; });
+  if (i < 0) return;
+  if (code) list[i].room = code; else delete list[i].room;
+  writeProjects(list);
+}
+
+/* The link opens Studio on whichever Xenon site this is framed in. */
+function shareLink(code) {
+  var base = location.origin + '/studio/';
+  try { if (window.parent !== window && document.referrer) base = new URL(document.referrer).origin + '/studio/'; } catch (e) {}
+  return base + '?room=' + code;
+}
+function paintCollab() {
+  var b = el('collab');
+  b.classList.toggle('on', !!room);
+  b.innerHTML = room ? '&#128101; ' + people.length : '&#128101; Collab';
+  b.title = room ? people.map(function (p) { return p.name; }).join(', ') : 'Make this project with friends, live';
+  if (el('cdlg').hidden) return;
+  el('cdlg-link').value = room ? shareLink(room.code) : '';
+  var box = el('cdlg-people');
+  box.textContent = '';
+  people.forEach(function (p) {
+    var s = document.createElement('span');
+    var i = document.createElement('i');
+    i.style.background = p.colour;
+    s.appendChild(i);
+    s.appendChild(document.createTextNode(p.name + (p.id === meId ? ' (you)' : '')));
+    box.appendChild(s);
+  });
+}
+function openCollab() {
+  el('cdlg-name').value = myName();
+  el('cdlg').hidden = false;
+  paintCollab();
+}
+el('collab').addEventListener('click', function () {
+  if (!current) return;
+  if (room) { openCollab(); return; }
+  say('starting collab...');
+  fetch('/api/studio/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: current.name, state: wireState() }) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j.ok) { say('could not start collab: ' + (j.why || 'unknown')); return; }
+      current.room = j.code;
+      persistRoom(j.code);
+      connect(j.code);
+      openCollab();
+    })
+    .catch(function () { say('could not reach the server'); });
+});
+el('cdlg-close').addEventListener('click', function () { el('cdlg').hidden = true; });
+el('cdlg-copy').addEventListener('click', function () {
+  var inp = el('cdlg-link');
+  var done = function () { el('cdlg-copy').textContent = 'Copied'; setTimeout(function () { el('cdlg-copy').textContent = 'Copy'; }, 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(inp.value).then(done, function () { inp.select(); try { document.execCommand('copy'); done(); } catch (e) {} });
+  } else { inp.select(); try { document.execCommand('copy'); done(); } catch (e) {} }
+});
+el('cdlg-name').addEventListener('change', function () {
+  var n = el('cdlg-name').value.trim().slice(0, 30);
+  if (!n) return;
+  try { localStorage.setItem('xs-name', n); } catch (e) {}
+  if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: 'name', name: n }));
+});
+el('cdlg-leave').addEventListener('click', function () {
+  ask('Stop collab on this project? You keep your own copy; the others keep theirs.', null, function () {
+    if (current) { current.room = null; persistRoom(null); }
+    disconnect();
+    el('cdlg').hidden = true;
+    say('collab stopped - this is your own copy now');
+  });
+});
+/* Opened from a collab link: find or make the local project for that room. */
+function joinRoom(code) {
+  var list = readProjects();
+  var p = list.filter(function (x) { return x.room === code; })[0];
+  if (!p) {
+    p = { id: 'p' + Date.now(), name: 'Collab', bpm: 130, bars: 64, tracks: [], clipCount: 0, updated: Date.now(), room: code };
+    list.unshift(p);
+    writeProjects(list);
+  }
+  openProject(p);
+}
+
+/* ----------------------------------------------------------- projects */
+/* Projects live in localStorage. Sample clips only reference a path, so they
+   restore exactly; recordings hold a decoded buffer that cannot be stored
+   this way, so they are dropped on save and the card says how many were lost
+   rather than silently discarding them. */
+var PKEY = 'xs-projects';
+var current = null;
+
+function readProjects() {
+  try { return JSON.parse(localStorage.getItem(PKEY)) || []; } catch (e) { return []; }
+}
+function writeProjects(list) {
+  try { localStorage.setItem(PKEY, JSON.stringify(list)); } catch (e) {}
+}
+
+function serialize() {
+  var lostRecordings = 0;
+  var out = tracks.map(function (t) {
+    return {
+      name: t.name, mute: t.mute, solo: !!t.solo,
+      vol: typeof t.vol === 'number' ? t.vol : 0.8,
+      clips: t.clips.filter(function (c) {
+        /* A recording shared in a collab room lives on the server, so it can
+           be kept like a sample; a private one is only in this tab. */
+        if (c.rec && String(c.path).indexOf('collab:') !== 0) { lostRecordings++; return false; }
+        return true;
+      }).map(function (c) {
+        return { path: c.path, name: c.name, start: c.start,
+                 offset: c.offset, dur: c.dur, full: c.full };
+      }),
+    };
+  });
+  return { tracks: out, bpm: bpm(), bars: bars(), lost: lostRecordings };
+}
+
+function saveCurrent() {
+  if (!current) return;
+  var list = readProjects();
+  var i = list.findIndex(function (p) { return p.id === current.id; });
+  if (i < 0) return;
+  var data = serialize();
+  list[i].tracks = data.tracks;
+  list[i].bpm = data.bpm;
+  list[i].bars = data.bars;
+  list[i].updated = Date.now();
+  list[i].clipCount = data.tracks.reduce(function (n, t) { return n + t.clips.length; }, 0);
+  writeProjects(list);
+}
+
+function openProject(p) {
+  current = p;
+  el('bpm').value = p.bpm || 130;
+  el('bars').value = p.bars || 64;
+  tracks = [];
+  (p.tracks && p.tracks.length ? p.tracks : []).forEach(function (t) {
+    var nt = addTrack(t.name, true);
+    nt.mute = !!t.mute;
+    nt.vol = typeof t.vol === 'number' ? t.vol : 0.8;   // older projects had none
+    nt.solo = !!t.solo;
+    (t.clips || []).forEach(function (c) {
+      nt.clips.push({ id: uid(), path: c.path, name: c.name, start: c.start,
+                      offset: c.offset, dur: c.dur, full: c.full, rec: String(c.path).indexOf('collab:') === 0 });
+    });
+  });
+  while (tracks.length < 16) addTrack(null, true);
+  drawTracks();
+  el('projects').hidden = true;
+  el('main').hidden = false;
+  paintBack();
+  say(p.name);
+  /* Clips reference samples by path; fetch them so playback works and the
+     waveforms can draw. */
+  var paths = {};
+  tracks.forEach(function (t) { t.clips.forEach(function (c) { paths[c.path] = 1; }); });
+  var keys = Object.keys(paths);
+  if (keys.length) {
+    audio();
+    say('loading ' + keys.length + ' samples...');
+    Promise.all(keys.map(function (k) { return getBuffer(k).catch(function () {}); }))
+      .then(function () { drawTracks(); say(p.name); });
+  }
+  /* A project that is a collab room rejoins it; the room's copy wins. */
+  if (p.room) connect(p.room);
+  paintCollab();
+}
+
+function showList() {
+  saveCurrent();
+  disconnect();
+  current = null;
+  stop(true);
+  el('main').hidden = true;
+  el('projects').hidden = false;
+  drawProjects();
+  paintBack();
+}
+
+var pIndex = 0;
+
+/* Place every card from one number: how far it sits from the middle. Beyond
+   two steps they are hidden, otherwise a hundred projects would all paint. */
+function layout() {
+  var cards = el('plist').querySelectorAll('.pcard');
+  for (var i = 0; i < cards.length; i++) {
+    var d = i - pIndex;
+    var ad = Math.abs(d);
+    var c = cards[i];
+    if (ad > 2) {
+      c.style.opacity = '0';
+      c.style.pointerEvents = 'none';
+      c.style.transform = 'translateX(' + (d > 0 ? 560 : -560) + 'px) rotateY(' +
+                          (d > 0 ? -48 : 48) + 'deg) scale(.6)';
+      c.classList.remove('mid');
+      continue;
+    }
+    var x = d * 196;
+    var rot = d === 0 ? 0 : (d > 0 ? -42 : 42);
+    var sc = d === 0 ? 1 : (ad === 1 ? 0.86 : 0.74);
+    var z = d === 0 ? 0 : -110 * ad;
+    c.style.opacity = d === 0 ? '1' : (ad === 1 ? '.9' : '.55');
+    c.style.pointerEvents = 'auto';
+    c.style.zIndex = String(50 - ad);
+    c.style.transform = 'translateX(' + x + 'px) translateZ(' + z + 'px) rotateY(' + rot + 'deg) scale(' + sc + ')';
+    c.classList.toggle('mid', d === 0);
+  }
+  var dots = el('pdots').querySelectorAll('.pdot');
+  for (var k = 0; k < dots.length; k++) dots[k].classList.toggle('on', k === pIndex);
+  el('pprev').disabled = pIndex <= 0;
+  el('pnext').disabled = pIndex >= cards.length - 1;
+}
+
+function go(n) {
+  var total = el('plist').querySelectorAll('.pcard').length;
+  pIndex = Math.max(0, Math.min(total - 1, n));
+  layout();
+}
+
+function drawProjects() {
+  var wrap = el('plist');
+  /* Keep the arrows; only the cards are rebuilt. */
+  var olds = wrap.querySelectorAll('.pcard');
+  for (var i = 0; i < olds.length; i++) olds[i].remove();
+  el('pdots').textContent = '';
+
+  var add = document.createElement('button');
+  add.className = 'pcard new';
+  add.textContent = '+  New Project';
+  add.addEventListener('click', function () {
+    ask('Name your project', 'Untitled ' + (readProjects().length + 1), function (name) {
+      var p = { id: 'p' + Date.now(), name: name.trim() || 'Untitled',
+                bpm: 130, bars: 64, tracks: [], clipCount: 0, updated: Date.now() };
+      var list = readProjects();
+      list.unshift(p);
+      writeProjects(list);
+      openProject(p);
+    });
+  });
+  wrap.appendChild(add);
+
+  var list = readProjects();
+  list.sort(function (a, b) { return (b.updated || 0) - (a.updated || 0); });
+  list.forEach(function (p) {
+    var card = document.createElement('button');
+    card.className = 'pcard';
+    var nm = document.createElement('span'); nm.className = 'pn'; nm.textContent = p.name;
+    var meta = document.createElement('span'); meta.className = 'pm';
+    var when = p.updated ? new Date(p.updated).toLocaleDateString() : '';
+    meta.textContent = (p.clipCount || 0) + ' clip' + (p.clipCount === 1 ? '' : 's') +
+                       '  ' + (p.bpm || 130) + ' bpm  ' + when;
+    var del = document.createElement('span');
+    del.className = 'pdel'; del.textContent = '\u00D7'; del.title = 'Delete project';
+    del.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      ask('Delete "' + p.name + '"?', null, function () {
+        writeProjects(readProjects().filter(function (x) { return x.id !== p.id; }));
+        drawProjects();
+      });
+    });
+    card.appendChild(del); card.appendChild(nm); card.appendChild(meta);
+    card.addEventListener('click', function () { openProject(p); });
+    wrap.appendChild(card);
+  });
+
+  /* One dot per card, and clicking a side card brings it to the middle
+     instead of opening it - opening what you cannot read would be a trap. */
+  var cards = wrap.querySelectorAll('.pcard');
+  for (var i = 0; i < cards.length; i++) {
+    (function (idx) {
+      var dot = document.createElement('button');
+      dot.className = 'pdot';
+      dot.type = 'button';
+      dot.addEventListener('click', function () { go(idx); });
+      el('pdots').appendChild(dot);
+      cards[idx].addEventListener('click', function (ev) {
+        if (idx !== pIndex) { ev.stopPropagation(); ev.preventDefault(); go(idx); }
+      }, true);
+    })(i);
+  }
+  pIndex = Math.min(pIndex, Math.max(0, cards.length - 1));
+  layout();
+}
+
+el('pprev').addEventListener('click', function () { go(pIndex - 1); });
+el('pnext').addEventListener('click', function () { go(pIndex + 1); });
+/* Horizontal intent only - a vertical scroll should not spin the carousel. */
+el('projects').addEventListener('wheel', function (ev) {
+  if (Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) {
+    ev.preventDefault();
+    go(pIndex + (ev.deltaX > 0 ? 1 : -1));
+  }
+}, { passive: false });
+document.addEventListener('keydown', function (ev) {
+  if (el('projects').hidden) return;
+  if (ev.key === 'ArrowRight') go(pIndex + 1);
+  if (ev.key === 'ArrowLeft') go(pIndex - 1);
+  if (ev.key === 'Enter') {
+    var mid = el('plist').querySelectorAll('.pcard')[pIndex];
+    if (mid) mid.click();
+  }
+});
+
+/* Back means one step out, not always 'show the list': from the editor that
+   is the project list, but from the list itself it is the portal. Pressing
+   it on the list did nothing before, which read as broken. */
+el('back').addEventListener('click', function () {
+  if (el('projects').hidden) { showList(); return; }
+  toXenon();
+});
+el('pback').addEventListener('click', function (ev) { ev.preventDefault(); toXenon(); });
+/* Inside the site, '/' is this frame's own origin - the proxy's browser page,
+   not Xenon - so the page around Studio is asked to close it instead. */
+function toXenon() {
+  saveCurrent();
+  if (window.parent !== window) { window.parent.postMessage({ xnStudio: 'back' }, '*'); return; }
+  location.href = '/';
+}
+
+/* A question in the page itself. With a default value it asks for text and
+   hands back what was typed; without, it is a yes/no. */
+function ask(text, value, yes) {
+  var box = el('dlg'), input = el('dlg-input');
+  el('dlg-text').textContent = text;
+  input.hidden = value === null || value === undefined;
+  input.value = input.hidden ? '' : value;
+  el('dlg-ok').textContent = input.hidden ? 'Yes' : 'OK';
+  box.hidden = false;
+  function close() { box.hidden = true; el('dlg-form').onsubmit = null; el('dlg-no').onclick = null; }
+  el('dlg-form').onsubmit = function (ev) { ev.preventDefault(); var v = input.value; close(); yes(v); };
+  el('dlg-no').onclick = close;
+  setTimeout(function () { if (input.hidden) el('dlg-ok').focus(); else { input.focus(); input.select(); } }, 0);
+}
+document.addEventListener('keydown', function (ev) {
+  if (ev.key === 'Escape' && !el('dlg').hidden) { el('dlg').hidden = true; ev.stopPropagation(); }
+}, true);
+
+function paintBack() {
+  var onList = !el('projects').hidden;
+  el('back').title = onList ? 'Back to Xenon' : 'Back to your projects';
+}
+/* Save on the way out as well - a closed tab should not lose the arrangement. */
+window.addEventListener('beforeunload', saveCurrent);
+setInterval(saveCurrent, 15000);
+
+/* Open on the project picker; tracks are built when a project is opened.
+   A collab link (?room=code) goes straight into that room. */
+drawProjects();
+(function () {
+  var m = location.search.match(/[?&]room=([a-z0-9]{8})/);
+  if (m) joinRoom(m[1]);
+})();
+paintBack();
+loadIndex();
+
+})();
+</script>
+</body>
+</html>

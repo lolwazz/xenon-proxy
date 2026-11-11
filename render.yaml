@@ -1,10 +1,18 @@
+# Render (free plan): the backup proxy for when the PC is off.
+# Render sleeps it after ~15 min with no visitors; the next visit wakes it
+# (30-60 s). There is no disk, so chat/profiles start empty and reset on every
+# restart. The VM, the big games and the AI keys stay on the PC.
 services:
   - type: web
     name: xenon-proxy
     runtime: node
     plan: free
-    buildCommand: npm install --ignore-scripts
+    # --ignore-scripts: skips puppeteer's Chromium download, which the server
+    # doesn't use and which would blow the free build's time and space.
+    buildCommand: npm install --ignore-scripts --no-audit --no-fund
     startCommand: node --use-system-ca server.js
+    healthCheckPath: /healthz
+    autoDeploy: true
     envVars:
       - key: NODE_VERSION
         value: "22"

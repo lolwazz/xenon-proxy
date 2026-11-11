@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My PC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#070b14; --panel:rgba(10,16,30,.62); --line:rgba(150,185,255,.16);
+  --text:#eef3ff; --dim:rgba(226,236,255,.52); --accent:#7aa2ff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:'Outfit',system-ui,sans-serif;
+  display:flex; flex-direction:column; min-height:100%;
+}
+body::before{
+  content:''; position:fixed; inset:0; z-index:0; pointer-events:none;
+  background:
+    radial-gradient(60% 50% at 20% 0%,rgba(90,130,255,.16),transparent 60%),
+    radial-gradient(50% 40% at 90% 10%,rgba(160,90,255,.12),transparent 60%);
+}
+header{
+  position:relative; z-index:2; display:flex; align-items:center; gap:1rem;
+  padding:1rem 1.3rem; border-bottom:1px solid var(--line);
+}
+.back{
+  display:inline-flex; align-items:center; gap:.45rem; padding:.45rem .8rem;
+  border-radius:999px; border:1px solid var(--line); background:var(--panel);
+  color:var(--text); font:inherit; font-size:.8rem; cursor:pointer;
+  transition:background .15s ease,border-color .15s ease;
+}
+.back:hover{background:rgba(30,45,80,.8); border-color:rgba(180,212,255,.5)}
+h1{margin:0; font-size:1.05rem; font-weight:800; letter-spacing:-.01em}
+.sub{margin:0; font-size:.68rem; color:var(--dim)}
+main{position:relative; z-index:2; flex:1 1 auto; padding:1.3rem; display:flex; flex-direction:column; gap:.8rem; align-items:center}
+.bar{display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; width:100%; max-width:1200px}
+.btn{
+  padding:.42rem .8rem; border-radius:10px; border:1px solid var(--line);
+  background:var(--panel); color:var(--text); font:inherit; font-size:.74rem; cursor:pointer;
+}
+.btn:hover{background:rgba(30,45,80,.85); border-color:rgba(180,212,255,.45)}
+.spacer{flex:1 1 auto}
+.btn.sel{border-color:var(--accent); background:rgba(60,90,160,.6)}
+.pick-label{font-size:.66rem; color:var(--dim); margin-right:.2rem; align-self:center}
+#status{font-size:.7rem; color:var(--dim)}
+.dot{display:inline-block; width:7px; height:7px; border-radius:50%; background:#f5c518; margin-right:.35rem}
+.dot.up{background:#7ee0a4}
+.dot.down{background:#e94560}
+.screenwrap{
+  width:100%; max-width:1200px; border-radius:14px; overflow:hidden;
+  border:1px solid var(--line); background:#000;
+  display:flex; align-items:center; justify-content:center; min-height:460px;
+}
+#screen{width:100%; height:100%; min-height:460px}
+.offline{
+  max-width:640px; margin:0 auto; padding:1.2rem 1.4rem; border-radius:16px;
+  border:1px solid rgba(245,197,24,.28); background:rgba(245,197,24,.06);
+  font-size:.78rem; line-height:1.65; color:rgba(238,243,255,.76);
+}
+.offline b{color:#f5c518}
+.offline code{
+  display:block; margin:.6rem 0 0; padding:.55rem .7rem; border-radius:8px;
+  background:rgba(0,0,0,.4); border:1px solid var(--line);
+  font-family:ui-monospace,monospace; font-size:.7rem; color:#d9e2ff; overflow-x:auto;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <button class="back" id="back" type="button">&#8592; Back</button>
+  <div>
+    <h1>Desktops</h1>
+    <p class="sub" id="subtitle">Hosted VMs</p>
+  </div>
+</header>
+
+<main>
+  <div class="bar" id="picker"></div>
+
+  <div class="bar">
+    <button class="btn" id="connect" type="button">Connect</button>
+    <button class="btn" id="cad" type="button">Ctrl+Alt+Del</button>
+    <button class="btn" id="full" type="button">Fullscreen</button>
+    <span class="spacer"></span>
+    <span id="status"><span class="dot" id="dot"></span>checking&#8230;</span>
+  </div>
+
+  <div class="screenwrap" id="wrap">
+    <div class="offline" id="offline">
+      <b>The PC is not running.</b>
+      This is a hosted VM rather than an emulator in your browser, so it is only
+      here while the host is up and the VM has been started. Start it with:
+      <code>powershell -ExecutionPolicy Bypass -File scripts\start-win10.ps1</code>
+      Then press Connect. If you want a machine that always works, the
+      <a href="/vm/" style="color:var(--accent)">emulator</a> runs in this tab with nothing else switched on.
+    </div>
+    <div id="screen" hidden></div>
+  </div>
+</main>
+
+<script type="module">
+import RFB from '/pc/novnc/core/rfb.js';
+
+var rfb = null;
+var el = function(id){ return document.getElementById(id); };
+
+/* One Windows box, plus four Linux seats. The seats are separate X
+   sessions on one Linux VM, so each really is its own desktop with its own
+   cursor and its own files - four people at once, which a single Windows
+   VM cannot do at any price. */
+var MACHINES = [
+  { id: 'win10', name: 'Windows' },
+  { id: 'seat1', name: 'Linux 1' },
+  { id: 'seat2', name: 'Linux 2' },
+  { id: 'seat3', name: 'Linux 3' },
+  { id: 'seat4', name: 'Linux 4' }
+];
+var current = (new URLSearchParams(location.search)).get('vm') || 'win10';
+if (!MACHINES.some(function(m){ return m.id === current; })) { current = 'win10'; }
+
+function setState(kind, text){
+  var d = el('dot');
+  d.className = 'dot' + (kind ? ' ' + kind : '');
+  el('status').lastChild.textContent = text;
+}
+
+/* Ask the proxy whether QEMU is listening before opening a socket, so a
+   machine that is simply off reads as off instead of as a broken page. */
+async function check(){
+  try {
+    var r = await fetch('/api/pc/status?vm=' + encodeURIComponent(current), { cache: 'no-store' });
+    var j = await r.json();
+    if (j.running) { setState('up', label() + ' is on'); return true; }
+    setState('down', label() + ' is off');
+    return false;
+  } catch (e) {
+    setState('down', 'proxy unreachable');
+    return false;
+  }
+}
+
+function connect(){
+  if (rfb) { return; }
+  var url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host +
+    '/pcws?vm=' + encodeURIComponent(current);
+  el('offline').hidden = true;
+  el('screen').hidden = false;
+  setState('', 'connecting…');
+
+  rfb = new RFB(el('screen'), url, {});
+  /* The VM's screen is whatever Windows is set to; scaling it to the box beats
+     making the page scroll. */
+  rfb.scaleViewport = true;
+  rfb.resizeSession = false;
+  rfb.background = '#000';
+
+  rfb.addEventListener('connect', function(){ setState('up', 'connected'); });
+  rfb.addEventListener('disconnect', function(e){
+    setState('down', (e.detail && e.detail.clean) ? 'disconnected' : 'connection lost');
+    rfb = null;
+    el('screen').hidden = true;
+    el('offline').hidden = false;
+  });
+  rfb.addEventListener('securityfailure', function(){ setState('down', 'auth failed'); });
+}
+
+el('connect').addEventListener('click', async function(){
+  if (await check()) { connect(); }
+});
+el('cad').addEventListener('click', function(){ if (rfb) { rfb.sendCtrlAltDel(); } });
+el('full').addEventListener('click', function(){
+  var w = el('wrap');
+  if (w.requestFullscreen) { w.requestFullscreen(); }
+  else if (w.webkitRequestFullscreen) { w.webkitRequestFullscreen(); }
+});
+el('back').addEventListener('click', function(){
+  if (rfb) { try { rfb.disconnect(); } catch (e) {} rfb = null; return; }
+  location.href = '/';
+});
+
+function label(){
+  for (var i = 0; i < MACHINES.length; i++) {
+    if (MACHINES[i].id === current) { return MACHINES[i].name; }
+  }
+  return current;
+}
+
+function buildPicker(){
+  var box = el('picker');
+  var lab = document.createElement('span');
+  lab.className = 'pick-label';
+  lab.textContent = 'Machine';
+  box.appendChild(lab);
+  MACHINES.forEach(function(m){
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn' + (m.id === current ? ' sel' : '');
+    b.textContent = m.name;
+    b.addEventListener('click', function(){
+      if (m.id === current) { return; }
+      /* Switching machines means a different socket, so drop the old one
+         rather than leaving it streaming in the background. */
+      if (rfb) { try { rfb.disconnect(); } catch (e) {} rfb = null; }
+      current = m.id;
+      el('subtitle').textContent = m.name + '';
+      [].forEach.call(box.querySelectorAll('.btn'), function(x){ x.classList.remove('sel'); });
+      b.classList.add('sel');
+      el('screen').hidden = true;
+      el('offline').hidden = false;
+      check().then(function(up){ if (up) { connect(); } });
+    });
+    box.appendChild(b);
+  });
+}
+buildPicker();
+el('subtitle').textContent = label() + '';
+
+/* Auto-connect if it is already up - one less click in the common case. */
+check().then(function(up){ if (up) { connect(); } });
+</script>
+</body>
+</html>

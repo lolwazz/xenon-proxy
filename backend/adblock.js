@@ -13,6 +13,14 @@ const BLOCKED_SUFFIXES = [
   'doubleclick.net', 'googlesyndication.com', 'googleadservices.com',
   'google-analytics.com', 'googletagmanager.com', 'googletagservices.com',
   'adservice.google.com', 'pagead2.googlesyndication.com',
+  // Google's video ad player (IMA). Through the proxy its messages arrive
+  // mangled, so it never says "ad done" or "no ad" - GameDistribution games
+  // then wait on a black screen forever. Blocked, the SDK sees no ad player
+  // and starts the game.
+  'imasdk.googleapis.com',
+  // GameDistribution's pre-game ad auction. Through the proxy the auction
+  // request never returns, and the game waits black for it indefinitely.
+  'headerlift.com', 'improvedigital.com',
   // Big exchanges and networks
   'adnxs.com', 'adsrvr.org', 'rubiconproject.com', 'pubmatic.com', 'openx.net',
   'casalemedia.com', 'indexexchange.com', 'criteo.com', 'criteo.net',

@@ -1,0 +1,123 @@
+#cloud-config
+# Turns a stock Ubuntu cloud image into a multi-seat desktop.
+#
+# This is the thing Windows cannot do. Linux runs one X session per user, so
+# every seat below gets its own desktop, its own cursor and its own home
+# directory on the same machine at the same time. Four people, four mice.
+#
+# Each seat listens on its own VNC display inside the guest:
+#   seat1 -> :1 (5901)   seat2 -> :2 (5902)
+#   seat3 -> :3 (5903)   seat4 -> :4 (5904)
+# QEMU forwards those to the host, and the proxy's bridge maps them to names.
+#
+# VNC runs with SecurityTypes None because the only route in is through the
+# site, which is where access is actually decided. If these are ever reachable
+# any other way that has to change.
+
+hostname: xenon-linux
+manage_etc_hosts: true
+
+users:
+  - name: seat1
+    groups: [audio, video]
+    shell: /bin/bash
+    lock_passwd: false
+    # "seat" for every seat. These are throwaway desktops on a machine that is
+    # only reachable through the site, not accounts worth protecting.
+    plain_text_passwd: seat
+  - name: seat2
+    groups: [audio, video]
+    shell: /bin/bash
+    lock_passwd: false
+    plain_text_passwd: seat
+  - name: seat3
+    groups: [audio, video]
+    shell: /bin/bash
+    lock_passwd: false
+    plain_text_passwd: seat
+  - name: seat4
+    groups: [audio, video]
+    shell: /bin/bash
+    lock_passwd: false
+    plain_text_passwd: seat
+
+package_update: true
+packages:
+  - xfce4
+  - xfce4-terminal
+  - xfce4-goodies
+  - tigervnc-standalone-server
+  - tigervnc-common
+  - dbus-x11
+  - fonts-dejavu
+  - mousepad
+  - ristretto
+
+write_files:
+  # One unit per seat. %i is the seat name; the display number is read from a
+  # per-user file so the template stays identical for all of them.
+  - path: /etc/systemd/system/vncseat@.service
+    content: |
+      [Unit]
+      Description=XFCE desktop over VNC for %i
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=%i
+      WorkingDirectory=/home/%i
+      Environment=HOME=/home/%i
+      Environment=USER=%i
+      # -localhost no because QEMU's user-mode networking reaches the guest on
+      # its own interface (10.0.2.15), never its loopback - a seat bound to
+      # localhost inside the guest is unreachable from the host.
+      #
+      # With no VNC password on a non-loopback bind, tigervnc refuses to start
+      # at all unless this is acknowledged explicitly; without the flag every
+      # seat exits 255 and systemd restart-loops it forever, which is exactly
+      # what "the seats never come up" looked like. The boundary is instead
+      # the host: start-linux.ps1 binds the forwards to 127.0.0.1, so the only
+      # route in is the proxy's bridge.
+      ExecStart=/usr/bin/vncserver -fg -localhost no --I-KNOW-THIS-IS-INSECURE \
+        -SecurityTypes None \
+        -geometry 1280x800 -depth 24 -xstartup /usr/local/bin/xenon-xstartup \
+        :${DISPLAY_NUM}
+      ExecStop=/usr/bin/vncserver -kill :${DISPLAY_NUM}
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /usr/local/bin/xenon-xstartup
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      # vncserver runs this as the session. Without dbus, xfce panels and the
+      # settings daemon fail in ways that look like "the desktop is broken".
+      unset SESSION_MANAGER
+      unset DBUS_SESSION_BUS_ADDRESS
+      exec dbus-launch --exit-with-session startxfce4
+
+runcmd:
+  # systemd templates cannot compute the display number, so each seat gets a
+  # tiny drop-in that pins its own.
+  - |
+    n=1
+    for s in seat1 seat2 seat3 seat4; do
+      mkdir -p /etc/systemd/system/vncseat@$s.service.d
+      printf '[Service]\nEnvironment=DISPLAY_NUM=%s\n' "$n" \
+        > /etc/systemd/system/vncseat@$s.service.d/display.conf
+      n=$((n+1))
+    done
+  - systemctl daemon-reload
+  - |
+    for s in seat1 seat2 seat3 seat4; do
+      systemctl enable --now vncseat@$s.service || true
+    done
+  # A marker the host can poll to know provisioning actually finished, rather
+  # than guessing from how long it has been.
+  - touch /var/lib/xenon-seats-ready
+
+final_message: "xenon multi-seat linux ready after $UPTIME seconds"

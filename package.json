@@ -21,16 +21,19 @@
     "@mercuryworkshop/libcurl-transport": "^2.0.5",
     "@mercuryworkshop/scramjet": "^1.1.0",
     "@mercuryworkshop/wisp-js": "^0.4.1",
+    "@novnc/novnc": "^1.7.0",
     "@ruffle-rs/ruffle": "^0.6.0",
     "@titaniumnetwork-dev/ultraviolet": "^3.2.10",
     "@tomphttp/bare-server-node": "^2.0.6",
     "cloudflared": "^0.7.3",
     "compression": "^1.7.4",
     "dotenv": "^16.4.5",
+    "eruda": "^3.4.3",
     "express": "^4.19.2",
     "http-proxy": "^1.18.1",
     "node-fetch": "^3.3.2",
     "puppeteer": "^25.10.0",
+    "v86": "^0.5.461",
     "wisp-server-node": "^1.1.8"
   }
 }

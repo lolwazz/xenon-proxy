@@ -1,36 +1,39 @@
 /**
- * Picks the well-known titles out of the full UGS index into popular.json.
- * Matching is on the filename, which is lowercase and squashed, so the needles
- * are written the same way. First match per needle wins, so "slope" gets the
- * base game rather than "Slope 2player".
+ * Builds popular.json: every game that has cover art.
+ *
+ * It used to be a hand-written list of well-known titles, which meant most of
+ * the page was blank coloured squares. Having art is a better signal anyway -
+ * a game only has a cover because someone bothered to make one for it, so the
+ * set of games with art is roughly the set of games people actually play.
+ *
+ * Two sources count as art:
+ *   covers.json - images copied onto this server (see arcady-covers.mjs)
+ *   art.json    - remote images found on Wikipedia (see game-art.mjs)
+ *
+ * Usage: node scripts/build-popular.mjs
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'g');
-const all = JSON.parse(readFileSync(join(DIR, 'index.json'), 'utf8'));
 
-const NEEDLES = `slope retrobowl geometrydash subwaysurfers amongus happywheels
-motox3m tunnelrush driftboss drifthunters cookieclicker 1v1lol 2048
-basketballstars basketballlegends soccerlegends shellshock krunker bloxd
-paperio stackball templerun ducklife fireboy vex madalin papaspizzeria
-snowrider monkeymart crossyroad flappybird doodlejump gettingoverit
-fridaynightfunkin tetris pacman chess checkers solitaire minecraft eaglercraft
-tinyfishing rooftopsnipers awesometanks cluster rocketleague drivemad
-smashkarts moto bitlife idleb cutthedry rideordie stickman helixjump
-worldshardestgame runrun burritobison learntofly ballgame footballlegends
-tanktrouble bubbleshooter mahjong sudoku wordle uno bloons ovo
-`.trim().split(/\s+/).filter(Boolean);
+const read = (f, fb) => (existsSync(join(DIR, f)) ? JSON.parse(readFileSync(join(DIR, f), 'utf8')) : fb);
 
-const seen = new Set();
-const picked = [];
-for (const needle of NEEDLES) {
-  const hit = all.find((g) => !seen.has(g.f) && g.f.toLowerCase().includes(needle));
-  if (hit) { seen.add(hit.f); picked.push(hit); }
-}
-picked.sort((a, b) => a.t.localeCompare(b.t, 'en', { numeric: true }));
+const all = read('index.json', []);
+const covers = read('covers.json', {});
+const art = read('art.json', {});
+
+const hasArt = (f) => Boolean(covers[f] || (art[f] && art[f].img));
+
+const picked = all
+  .filter((g) => hasArt(g.f))
+  .sort((a, b) => a.t.localeCompare(b.t, 'en', { numeric: true }));
 
 writeFileSync(join(DIR, 'popular.json'), JSON.stringify(picked));
-console.log(`${picked.length} of ${NEEDLES.length} needles matched`);
-console.log(picked.map((g) => '  ' + g.t).join('\n'));
+
+console.log('  ' + picked.length + ' games with art -> popular.json');
+console.log('    local covers: ' + picked.filter((g) => covers[g.f]).length);
+console.log('    remote art:   ' + picked.filter((g) => art[g.f] && art[g.f].img).length);
+console.log('');
+picked.slice(0, 8).forEach((g) => console.log('    ' + g.t));

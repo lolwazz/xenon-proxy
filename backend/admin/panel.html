@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex,nofollow">
+<title>Xenon Admin</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237c3aed'/%3E%3Ctext x='16' y='22' font-size='17' font-family='Arial' font-weight='700' fill='white' text-anchor='middle'%3EX%3C/text%3E%3C/svg%3E">
+<style nonce="__NONCE__">
+:root{--bg:#0a0812;--panel:#120f1e;--panel2:#181428;--line:rgba(196,170,255,.12);--line2:rgba(196,170,255,.24);--ink:#ece8f7;--dim:#a39dbb;--faint:#6f6987;
+  --acc:#a78bfa;--acc2:#e879f9;--ok:#34d399;--warn:#fbbf24;--bad:#f87171;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.5 Inter,"Segoe UI",system-ui,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--acc)}
+.app{display:grid;grid-template-columns:232px 1fr;height:100%}
+aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.brand{display:flex;align-items:center;gap:.7rem;padding:1.1rem 1.1rem 1rem;border-bottom:1px solid var(--line)}
+.logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-weight:800;color:#fff;background:linear-gradient(135deg,#a78bfa,#7c3aed 55%,#e879f9)}
+.brand b{display:block;font-size:.95rem}.brand small{display:block;color:var(--faint);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase}
+nav{flex:1;overflow:auto;padding:.7rem .55rem}
+nav p{margin:.9rem .6rem .3rem;font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:600}
+nav button{display:flex;align-items:center;gap:.6rem;width:100%;padding:.5rem .65rem;border:0;border-radius:8px;background:none;color:var(--dim);cursor:pointer;text-align:left;font-size:.86rem}
+nav button:hover{background:rgba(167,139,250,.08);color:var(--ink)}
+nav button.on{background:rgba(167,139,250,.16);color:#fff}
+nav button .c{margin-left:auto;font-size:.7rem;color:var(--faint)}
+.side-foot{padding:.8rem 1rem;border-top:1px solid var(--line);font-size:.72rem;color:var(--faint)}
+.side-foot i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:.4rem;box-shadow:0 0 8px var(--ok)}
+main{overflow:auto;min-width:0}
+header.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:1rem;padding:1rem 1.6rem;background:rgba(10,8,18,.88);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+header.top h1{margin:0;font-size:1.15rem;font-weight:650}
+header.top .sp{flex:1}
+.wrap{padding:1.4rem 1.6rem 3rem;max-width:1280px}
+.grid{display:grid;gap:1rem}
+.g4{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
+.g2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:1.1rem 1.2rem}
+.card h2{margin:0 0 .2rem;font-size:.95rem;font-weight:620}
+.card .sub{margin:0 0 .9rem;color:var(--faint);font-size:.78rem}
+.stat .k{font-size:.72rem;color:var(--faint);letter-spacing:.06em;text-transform:uppercase}
+.stat .v{font-size:1.7rem;font-weight:700;margin-top:.15rem;letter-spacing:-.01em}
+.stat .d{font-size:.74rem;color:var(--dim)}
+.bar{height:6px;border-radius:6px;background:rgba(255,255,255,.06);overflow:hidden;margin:.35rem 0 .7rem}
+.bar i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--acc),var(--acc2))}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:.35rem 1rem;font-size:.82rem}.kv span:nth-child(odd){color:var(--faint)}
+.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.48rem .85rem;border-radius:8px;border:1px solid var(--line2);background:var(--panel2);cursor:pointer;font-size:.8rem;white-space:nowrap}
+.btn:hover{border-color:rgba(196,170,255,.45);background:#1e1933}
+.btn.pri{border:0;background:linear-gradient(135deg,#a78bfa,#7c3aed);color:#fff;font-weight:600}
+.btn.pri:hover{filter:brightness(1.1)}
+.btn.danger{color:#fecaca;border-color:rgba(248,113,113,.35)}
+.btn.danger:hover{background:rgba(248,113,113,.14)}
+.btn.sm{padding:.28rem .55rem;font-size:.72rem}
+input[type=text],input:not([type]),input[type=number],input[type=search],select,textarea{width:100%;padding:.55rem .7rem;border-radius:8px;border:1px solid var(--line2);background:#0e0b18;outline:0}
+input:focus,select:focus,textarea:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(167,139,250,.18)}
+textarea{resize:vertical;min-height:70px}
+.row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.row>input,.row>select{flex:1;min-width:140px}
+label.f{display:block;font-size:.74rem;color:var(--dim);margin:.6rem 0 .3rem}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.65rem 0;border-top:1px solid var(--line)}
+.sw:first-of-type{border-top:0}
+.sw b{display:block;font-size:.86rem;font-weight:560}.sw small{display:block;color:var(--faint);font-size:.74rem}
+.tog{position:relative;width:42px;height:24px;flex:0 0 42px;border-radius:99px;border:0;background:#2a2540;cursor:pointer;transition:background .15s}
+.tog::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .15s}
+.tog.on{background:linear-gradient(135deg,#a78bfa,#e879f9)}.tog.on::after{transform:translateX(18px)}
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+th{text-align:left;font-weight:600;color:var(--faint);font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;padding:.5rem .6rem;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+td{padding:.55rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
+tr:hover td{background:rgba(167,139,250,.04)}
+td.msg{max-width:520px;white-space:pre-wrap;overflow-wrap:anywhere}
+td.act{white-space:nowrap;text-align:right}
+td.act .btn{margin-left:.25rem}
+.tbl{max-height:560px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.pill{display:inline-block;padding:.08rem .5rem;border-radius:99px;font-size:.68rem;font-weight:600}
+.pill.ok{background:rgba(52,211,153,.14);color:var(--ok)}.pill.bad{background:rgba(248,113,113,.14);color:var(--bad)}
+.pill.warn{background:rgba(251,191,36,.14);color:var(--warn)}.pill.acc{background:rgba(167,139,250,.16);color:#c4b5fd}
+.mono{font-family:Consolas,"Cascadia Mono",monospace;font-size:.74rem;color:var(--dim)}
+.muted{color:var(--faint)}
+.chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.chip{display:inline-flex;align-items:center;gap:.35rem;padding:.25rem .3rem .25rem .6rem;border-radius:99px;background:var(--panel2);border:1px solid var(--line2);font-size:.76rem}
+.chip button{border:0;background:none;color:var(--faint);cursor:pointer;padding:0 .25rem}.chip button:hover{color:var(--bad)}
+section[hidden]{display:none}
+#toast{position:fixed;right:1.2rem;bottom:1.2rem;z-index:50;padding:.7rem 1rem;border-radius:10px;background:#1e1933;border:1px solid var(--line2);box-shadow:0 12px 30px rgba(0,0,0,.5);font-size:.82rem;opacity:0;transform:translateY(8px);transition:.2s}
+#toast.on{opacity:1;transform:none}#toast.bad{border-color:rgba(248,113,113,.5)}
+#dlg{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(5,3,10,.7);backdrop-filter:blur(4px)}
+#dlg.on{display:flex}
+#dlg .box{width:min(440px,92vw);background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:1.3rem}
+#dlg h3{margin:0 0 .4rem;font-size:1rem}#dlg p{margin:0 0 1rem;color:var(--dim);font-size:.85rem;overflow-wrap:anywhere}
+#dlg .row{justify-content:flex-end}
+.code{white-space:pre-wrap;overflow-wrap:anywhere;background:#0e0b18;border:1px solid var(--line);border-radius:8px;padding:.6rem;font-family:Consolas,monospace;font-size:.72rem;max-height:200px;overflow:auto}
+.mt1{margin-top:1rem}.mt9{margin-top:.9rem}.mt7{margin-top:.7rem}.mt8{margin-top:.8rem}.mb8{margin-bottom:.8rem}.f1{flex:1}.m0{margin:0}.mw{max-width:260px}
+@media (max-width:820px){.app{grid-template-columns:1fr}aside{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand"><span class="logo">X</span><div><b>Xenon Admin</b><small>Control panel</small></div></div>
+    <nav id="nav">
+      <p>General</p>
+      <button data-s="overview" class="on">Overview</button>
+      <button data-s="site">Site &amp; notices</button>
+      <p>Community</p>
+      <button data-s="chat">Chat moderation <span class="c" id="n-msg"></span></button>
+      <button data-s="bans">Bans <span class="c" id="n-ban"></span></button>
+      <button data-s="people">People <span class="c" id="n-ppl"></span></button>
+      <button data-s="voice">Voice <span class="c" id="n-vc"></span></button>
+      <p>Content</p>
+      <button data-s="bookmarklets">Bookmarklets</button>
+      <button data-s="clips">Clips</button>
+      <p>System</p>
+      <button data-s="machines">Machines</button>
+      <button data-s="security">Security &amp; audit</button>
+    </nav>
+    <div class="side-foot"><i></i><span id="foot">connected</span></div>
+  </aside>
+  <main>
+    <header class="top"><h1 id="title">Overview</h1><span class="sp"></span><span class="muted" id="updated"></span><button class="btn" id="refresh">Refresh</button></header>
+    <div class="wrap">
+
+<section id="s-overview">
+  <div class="grid g4" id="stats"></div>
+  <div class="grid g2 mt1">
+    <div class="card"><h2>Quick switches</h2><p class="sub">Take effect immediately for everyone.</p><div id="quick"></div></div>
+    <div class="card"><h2>Server health</h2><p class="sub">This PC, running the proxy.</p><div id="health"></div></div>
+  </div>
+</section>
+
+<section id="s-site" hidden>
+  <div class="grid g2">
+    <div class="card"><h2>Announcement banner</h2><p class="sub">Shown across the top of every page. Leave empty to hide it.</p>
+      <label class="f">Text</label><textarea id="ann-text" maxlength="300"></textarea>
+      <label class="f">Style</label><select id="ann-level"><option value="info">Info (purple)</option><option value="warn">Warning (amber)</option><option value="party">Celebration (gradient)</option></select>
+      <div class="row mt9"><button class="btn pri" id="ann-save">Publish banner</button><button class="btn" id="ann-clear">Remove</button></div></div>
+    <div class="card"><h2>Maintenance mode</h2><p class="sub">Covers every page with a notice. Games, chat and the proxy keep running underneath.</p>
+      <div class="sw"><div><b>Maintenance on</b><small>Visitors see the notice instead of the site</small></div><button class="tog" id="mt-on"></button></div>
+      <label class="f">Message</label><textarea id="mt-text" maxlength="300" placeholder="Back soon - upgrading things."></textarea>
+      <div class="row mt9"><button class="btn pri" id="mt-save">Save</button></div></div>
+  </div>
+</section>
+
+<section id="s-chat" hidden>
+  <div class="grid g2">
+    <div class="card"><h2>Post as Xenon</h2><p class="sub">A message in #general from the Xenon system account.</p>
+      <textarea id="sys-text" maxlength="500" placeholder="Server restart in 5 minutes..."></textarea>
+      <div class="row mt7"><button class="btn pri" id="sys-send">Post</button></div></div>
+    <div class="card"><h2>Room settings</h2><p class="sub">Lock, slow mode and the pinned line at the top of the chat.</p>
+      <div class="sw"><div><b>Lock chat</b><small>Nobody can post; everyone can still read</small></div><button class="tog" id="t-chatLocked"></button></div>
+      <label class="f">Slow mode</label><select id="slow"><option value="0">Off</option><option value="3">3 seconds</option><option value="10">10 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="300">5 minutes</option></select>
+      <label class="f">Pinned message</label><div class="row"><input id="pin" maxlength="300" placeholder="Welcome! Be nice."><button class="btn" id="pin-save">Save</button></div>
+      <label class="f">Filtered words (comma separated, starred out)</label><div class="row"><input id="words"><button class="btn" id="words-save">Save</button></div></div>
+  </div>
+  <div class="card mt1"><div class="row mb8"><div class="f1"><h2>Messages</h2><p class="sub m0">Newest first. Device = salted hash of the sender's address, for device bans.</p></div>
+    <input type="search" id="msg-q" placeholder="Search name or text" class="mw"><button class="btn" id="export">Export JSON</button></div>
+    <div class="tbl"><table><thead><tr><th>When</th><th>Name</th><th>Message</th><th>Device</th><th></th></tr></thead><tbody id="msgs"></tbody></table></div></div>
+</section>
+
+<section id="s-bans" hidden>
+  <div class="grid g2">
+    <div class="card"><h2>Banned names</h2><p class="sub">These display names cannot post.</p><div class="row"><input id="ban-name" placeholder="name"><button class="btn pri" id="ban-name-add">Ban</button></div><div class="chips" id="bn" class="mt8"></div></div>
+    <div class="card"><h2>Banned devices</h2><p class="sub">Blocks a sender's network address, whatever name they use. Ban from a message row.</p><div class="chips" id="bd"></div></div>
+  </div>
+</section>
+
+<section id="s-people" hidden>
+  <div class="card"><div class="row mb8"><div class="f1"><h2>Profiles</h2><p class="sub m0">Everyone who has set up a profile.</p></div>
+    <button class="btn" id="clear-off">Remove profiles idle 30+ days</button></div>
+    <div class="tbl"><table><thead><tr><th>Name</th><th>Status</th><th>Activity</th><th>Last seen</th><th>Joined</th><th>Border</th><th>Bio</th><th></th></tr></thead><tbody id="ppl"></tbody></table></div></div>
+</section>
+
+<section id="s-voice" hidden>
+  <div class="card"><div class="sw"><div><b>Lock the voice channel</b><small>Nobody can join. Locking also disconnects everyone in it.</small></div><button class="tog" id="t-voiceLocked"></button></div></div>
+  <div class="card mt1"><h2>In voice now</h2><p class="sub">People in the Lounge.</p>
+    <div class="tbl"><table><thead><tr><th>Name</th><th>Mic</th><th></th></tr></thead><tbody id="vc"></tbody></table></div></div>
+</section>
+
+<section id="s-bookmarklets" hidden>
+  <div class="card"><h2>Posted bookmarklets</h2><p class="sub">Built-in ones are not listed. Official ones get a gold badge in the proxy.</p>
+    <div class="tbl"><table><thead><tr><th>Name</th><th>By</th><th>Runs</th><th>Posted</th><th></th></tr></thead><tbody id="bml"></tbody></table></div></div>
+</section>
+
+<section id="s-clips" hidden>
+  <div class="card"><h2>Shared clips</h2><p class="sub" id="clips-sub">Clips people chose to share.</p>
+    <div class="tbl"><table><thead><tr><th>Title</th><th>By</th><th>Length</th><th>Size</th><th>Shared</th><th></th></tr></thead><tbody id="clips"></tbody></table></div></div>
+</section>
+
+<section id="s-machines" hidden>
+  <div class="grid g4" id="vms"></div>
+  <div class="card mt1"><h2>Linux seats</h2><p class="sub">Who is driving and watching.</p><div id="seats"></div></div>
+</section>
+
+<section id="s-security" hidden>
+  <div class="grid g2">
+    <div class="card"><h2>Admin address</h2><p class="sub">This panel's secret URL is the only way in. Rotate it if it may have leaked; the old one stops working at once.</p>
+      <div class="row"><button class="btn pri" id="rotate">Rotate admin URL</button></div>
+      <div id="newurl" class="mt8"></div></div>
+    <div class="card"><h2>Server</h2><p class="sub">Restarting takes about two seconds. People in voice will reconnect.</p>
+      <div class="row"><button class="btn danger" id="restart">Restart server</button></div></div>
+  </div>
+  <div class="card mt1"><h2>Audit log</h2><p class="sub">Every admin action. Addresses are stored hashed.</p>
+    <div class="tbl"><table><thead><tr><th>When</th><th>Action</th><th>Detail</th><th>From</th></tr></thead><tbody id="audit"></tbody></table></div></div>
+</section>
+
+    </div>
+  </main>
+</div>
+<div id="toast"></div>
+<div id="dlg"><div class="box"><h3 id="dlg-t"></h3><p id="dlg-p"></p><div class="row"><button class="btn" id="dlg-no">Cancel</button><button class="btn pri" id="dlg-yes">Confirm</button></div></div></div>
+
+<script nonce="__NONCE__">
+(function () {
+  var TOKEN = location.pathname.split('/admin/')[1] || '';
+  var $ = function (id) { return document.getElementById(id); };
+  var data = { settings: {} };
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function td(text, cls) { return el('td', cls, text); }
+  function btn(text, cls, fn) { var b = el('button', 'btn sm ' + (cls || ''), text); b.type = 'button'; b.addEventListener('click', fn); return b; }
+  function bytes(n) { if (!n) return '0 B'; var u = ['B', 'KB', 'MB', 'GB', 'TB'], i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + ' ' + u[i]; }
+  function dur(s) { s = Math.round(s); var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + 'd ' : '') + (h ? h + 'h ' : '') + m + 'm'; }
+  function ago(ms) { var s = (Date.now() - ms) / 1000; if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago'; return Math.floor(s / 86400) + 'd ago'; }
+  var ACT = { playing: 'Playing', games: 'Looking for a game', listening: 'Listening', watching: 'Watching', searching: 'Searching the web', browsing: 'Browsing the web', chatting: 'Chatting', vm: 'Using a virtual PC', studio: 'In Studio', apps: 'Browsing apps' };
+  function actText(a) { if (!a || !ACT[a.k]) return '-'; return ACT[a.k] + (a.d ? ' ' + a.d : '') + (a.at ? ' (' + ago(a.at).replace(' ago', '') + ')' : ''); }
+  function when(iso) { var t = new Date(/Z$/.test(iso) ? iso : iso + 'Z'); return isNaN(t) ? iso : t.toLocaleString(); }
+
+  var toastT;
+  function toast(t, bad) { var e = $('toast'); e.textContent = t; e.className = 'on' + (bad ? ' bad' : ''); clearTimeout(toastT); toastT = setTimeout(function () { e.className = ''; }, 2600); }
+  function confirmBox(title, text, yes) {
+    $('dlg-t').textContent = title; $('dlg-p').textContent = text; $('dlg').className = 'on';
+    var y = $('dlg-yes'), n = $('dlg-no');
+    function done() { $('dlg').className = ''; y.onclick = n.onclick = null; }
+    y.onclick = function () { done(); yes(); };
+    n.onclick = done;
+  }
+
+  function api(path, body) {
+    var opt = { headers: { 'X-Admin-Token': TOKEN }, cache: 'no-store' };
+    if (body) { opt.method = 'POST'; opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+    return fetch('/api/admin' + path, opt).then(function (r) {
+      if (r.status === 404) { $('foot').textContent = 'access lost'; throw new Error('access lost'); }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('error ' + r.status)); return j; });
+    });
+  }
+  function act(path, body, msg, then) {
+    return api(path, body).then(function (j) { if (msg) toast(msg); if (then) then(j); return j; }).catch(function (e) { toast(e.message, true); });
+  }
+
+  /* ------------------------------------------------ navigation */
+  var NAMES = { overview: 'Overview', site: 'Site & notices', chat: 'Chat moderation', bans: 'Bans', people: 'People', voice: 'Voice', bookmarklets: 'Bookmarklets', clips: 'Clips', machines: 'Machines', security: 'Security & audit' };
+  var current = 'overview';
+  function show(s) {
+    current = s;
+    [].forEach.call(document.querySelectorAll('#nav button'), function (b) { b.classList.toggle('on', b.getAttribute('data-s') === s); });
+    Object.keys(NAMES).forEach(function (k) { $('s-' + k).hidden = k !== s; });
+    $('title').textContent = NAMES[s];
+    load(s);
+  }
+  [].forEach.call(document.querySelectorAll('#nav button'), function (b) { b.addEventListener('click', function () { show(b.getAttribute('data-s')); }); });
+  $('refresh').addEventListener('click', function () { load(current); });
+
+  /* ------------------------------------------------ settings helpers */
+  function setS(patch, msg) { return act('/settings', patch, msg || 'Saved', function (j) { data.settings = j.settings; paintSettings(); }); }
+  function bindTog(id, key, msgOn, msgOff) {
+    var t = $(id);
+    if (!t) return;
+    t.addEventListener('click', function () {
+      var v = !data.settings[key];
+      var go = function () { var p = {}; p[key] = v; setS(p, v ? msgOn : msgOff); };
+      if (key === 'voiceLocked') { if (v) { confirmBox('Lock voice?', 'Everyone in the Lounge will be disconnected.', go); return; } }
+      go();
+    });
+  }
+  function paintSettings() {
+    var S = data.settings || {};
+    [['t-chatLocked', 'chatLocked'], ['t-voiceLocked', 'voiceLocked']].forEach(function (p) { var e = $(p[0]); if (e) e.classList.toggle('on', !!S[p[1]]); });
+    $('slow').value = String(S.slowSec || 0);
+    $('pin').value = S.pinned || '';
+    $('words').value = (S.words || []).join(', ');
+    $('ann-text').value = (S.announce && S.announce.text) || '';
+    $('ann-level').value = (S.announce && S.announce.level) || 'info';
+    $('mt-on').classList.toggle('on', !!(S.maintenance && S.maintenance.on));
+    $('mt-text').value = (S.maintenance && S.maintenance.text) || '';
+    $('n-ban').textContent = ((S.bannedNames || []).length + (S.bannedDevices || []).length) || '';
+    paintQuick();
+    paintBans();
+  }
+  bindTog('t-chatLocked', 'chatLocked', 'Chat locked', 'Chat unlocked');
+  bindTog('t-voiceLocked', 'voiceLocked', 'Voice locked', 'Voice unlocked');
+  $('slow').addEventListener('change', function () { setS({ slowSec: $('slow').value }, 'Slow mode updated'); });
+  $('pin-save').addEventListener('click', function () { setS({ pinned: $('pin').value }, 'Pinned message saved'); });
+  $('words-save').addEventListener('click', function () { setS({ words: $('words').value }, 'Word filter saved'); });
+  $('ann-save').addEventListener('click', function () { setS({ announce: { text: $('ann-text').value, level: $('ann-level').value } }, 'Banner published'); });
+  $('ann-clear').addEventListener('click', function () { setS({ announce: { text: '', level: 'info' } }, 'Banner removed'); });
+  $('mt-on').addEventListener('click', function () {
+    var on = !(data.settings.maintenance && data.settings.maintenance.on);
+    var go = function () { setS({ maintenance: { on: on, text: $('mt-text').value } }, on ? 'Maintenance mode ON' : 'Maintenance mode off'); };
+    if (on) confirmBox('Turn on maintenance mode?', 'Every visitor will see the maintenance notice instead of the site.', go); else go();
+  });
+  $('mt-save').addEventListener('click', function () { setS({ maintenance: { on: !!(data.settings.maintenance && data.settings.maintenance.on), text: $('mt-text').value } }, 'Saved'); });
+
+  /* ------------------------------------------------ overview */
+  function paintQuick() {
+    var S = data.settings || {}, q = $('quick');
+    if (!q) return;
+    q.textContent = '';
+    [['chatLocked', 'Lock chat', 'Read-only for everyone'], ['voiceLocked', 'Lock voice', 'Disconnects and blocks the Lounge'],
+     ['aiOff', 'Switch off the AI', 'Xenon AI stops answering'], ['maintenance', 'Maintenance mode', 'Cover the site with a notice']].forEach(function (x) {
+      var row = el('div', 'sw');
+      var t = el('div'); t.appendChild(el('b', '', x[1])); t.appendChild(el('small', '', x[2]));
+      var on = x[0] === 'maintenance' ? !!(S.maintenance && S.maintenance.on) : !!S[x[0]];
+      var tg = el('button', 'tog' + (on ? ' on' : ''));
+      tg.type = 'button';
+      tg.addEventListener('click', function () {
+        var p = {};
+        if (x[0] === 'maintenance') p.maintenance = { on: !on, text: (S.maintenance && S.maintenance.text) || '' };
+        else p[x[0]] = !on;
+        var go = function () { setS(p, x[1] + (on ? ' - off' : ' - on')); };
+        if (!on) { if (x[0] === 'maintenance' || x[0] === 'voiceLocked') { confirmBox(x[1] + '?', x[2] + '.', go); return; } }
+        go();
+      });
+      row.appendChild(t); row.appendChild(tg);
+      q.appendChild(row);
+    });
+  }
+  function stat(k, v, d) { var c = el('div', 'card stat'); c.appendChild(el('div', 'k', k)); c.appendChild(el('div', 'v', v)); if (d) c.appendChild(el('div', 'd', d)); return c; }
+  function loadOverview() {
+    return api('/overview').then(function (j) {
+      data.settings = j.settings; paintSettings();
+      var c = j.counts, s = j.server, st = $('stats');
+      st.textContent = '';
+      st.appendChild(stat('Online now', c.online, c.profiles + ' profiles total'));
+      st.appendChild(stat('Chat messages', c.messages, data.settings.chatLocked ? 'chat is locked' : 'stored'));
+      st.appendChild(stat('In voice', c.voice, data.settings.voiceLocked ? 'voice is locked' : 'Lounge'));
+      st.appendChild(stat('Shared clips', c.clips, bytes(c.clipBytes)));
+      st.appendChild(stat('Bookmarklets', c.bookmarklets, 'posted by people'));
+      st.appendChild(stat('Ads blocked', c.adsBlocked.toLocaleString(), c.requestsAllowed.toLocaleString() + ' requests allowed'));
+      st.appendChild(stat('Server uptime', dur(s.uptime), 'PC up ' + dur(s.hostUptime)));
+      st.appendChild(stat('Xenon AI', j.ai.off ? 'Off' : (j.ai.configured ? 'On' : 'No key'), j.ai.off ? 'switched off here' : ''));
+      $('n-msg').textContent = c.messages; $('n-ppl').textContent = c.online || ''; $('n-vc').textContent = c.voice || '';
+      var h = $('health'); h.textContent = '';
+      var used = s.totalMem - s.freeMem;
+      h.appendChild(el('div', 'muted', 'PC memory  ' + bytes(used) + ' / ' + bytes(s.totalMem)));
+      var b1 = el('div', 'bar'); var i1 = el('i'); i1.style.width = Math.round(used / s.totalMem * 100) + '%'; b1.appendChild(i1); h.appendChild(b1);
+      var kv = el('div', 'kv');
+      [['Proxy memory', bytes(s.rss) + ' (heap ' + bytes(s.heap) + ')'], ['CPU cores', s.cpus], ['Load', s.load.map(function (x) { return x.toFixed(2); }).join(' / ') || 'n/a'], ['Node', s.node], ['System', s.platform]].forEach(function (r) { kv.appendChild(el('span', '', r[0])); kv.appendChild(el('span', '', String(r[1]))); });
+      h.appendChild(kv);
+    });
+  }
+
+  /* ------------------------------------------------ chat */
+  var msgs = [];
+  function paintMsgs() {
+    var q = $('msg-q').value.trim().toLowerCase(), tb = $('msgs');
+    tb.textContent = '';
+    msgs.slice().reverse().filter(function (m) { return !q || (m.name + ' ' + m.text).toLowerCase().indexOf(q) !== -1; }).slice(0, 400).forEach(function (m) {
+      var tr = el('tr');
+      tr.appendChild(td(when(m.date), 'muted'));
+      var nm = td(m.name); if (m.bot) nm.appendChild(el('span', 'pill acc', ' BOT')); tr.appendChild(nm);
+      tr.appendChild(td(m.text, 'msg'));
+      tr.appendChild(td(m.dev || '-', 'mono'));
+      var a = el('td', 'act');
+      a.appendChild(btn('Delete', 'danger', function () { act('/chat/delete', { id: m.id }, 'Message deleted', loadChat); }));
+      if (!m.bot) {
+        a.appendChild(btn('Purge user', '', function () { confirmBox('Delete all messages from ' + m.name + '?', 'Removes every line this name has posted.', function () { act('/chat/purge', { name: m.name }, null, function (j) { toast(j.removed + ' messages removed'); loadChat(); }); }); }));
+        a.appendChild(btn('Ban name', '', function () { act('/ban', { kind: 'name', value: m.name }, m.name + ' banned', loadOverview); }));
+        if (m.dev) a.appendChild(btn('Ban device', 'danger', function () { confirmBox('Ban this device?', 'Blocks posts from ' + m.name + "'s network address under any name.", function () { act('/ban', { kind: 'device', value: m.dev }, 'Device banned', loadOverview); }); }));
+      }
+      tr.appendChild(a);
+      tb.appendChild(tr);
+    });
+    if (!tb.children.length) { var tr = el('tr'); var c = td('No messages.', 'muted'); c.colSpan = 5; tr.appendChild(c); tb.appendChild(tr); }
+  }
+  function loadChat() { return Promise.all([api('/chat?limit=1000'), loadOverview()]).then(function (r) { msgs = r[0].messages; paintMsgs(); }); }
+  $('msg-q').addEventListener('input', paintMsgs);
+  $('sys-send').addEventListener('click', function () { var t = $('sys-text').value.trim(); if (!t) return; act('/chat/system', { text: t }, 'Posted to #general', function () { $('sys-text').value = ''; loadChat(); }); });
+  $('export').addEventListener('click', function () {
+    fetch('/api/admin/chat/export', { headers: { 'X-Admin-Token': TOKEN } }).then(function (r) { return r.blob(); }).then(function (b) {
+      var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'xenon-chat-' + new Date().toISOString().slice(0, 10) + '.json'; a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+    });
+  });
+
+  /* ------------------------------------------------ bans */
+  function paintBans() {
+    var S = data.settings || {};
+    [['bn', 'bannedNames', 'name'], ['bd', 'bannedDevices', 'device']].forEach(function (x) {
+      var box = $(x[0]); box.textContent = '';
+      (S[x[1]] || []).forEach(function (v) {
+        var c = el('span', 'chip' + (x[2] === 'device' ? ' mono' : ''), v);
+        var r = el('button', '', '×'); r.type = 'button'; r.title = 'Unban';
+        r.addEventListener('click', function () { act('/unban', { kind: x[2], value: v }, 'Unbanned', loadOverview); });
+        c.appendChild(r); box.appendChild(c);
+      });
+      if (!box.children.length) box.appendChild(el('span', 'muted', 'Nobody.'));
+    });
+  }
+  $('ban-name-add').addEventListener('click', function () { var v = $('ban-name').value.trim(); if (!v) return; act('/ban', { kind: 'name', value: v }, v + ' banned', function () { $('ban-name').value = ''; loadOverview(); }); });
+
+  /* ------------------------------------------------ people */
+  function loadPeople() {
+    return api('/people').then(function (j) {
+      var tb = $('ppl'); tb.textContent = '';
+      j.people.forEach(function (p) {
+        var tr = el('tr');
+        tr.appendChild(td(p.name));
+        var s = el('td'); s.appendChild(el('span', 'pill ' + (p.online ? 'ok' : 'warn'), p.online ? 'online' : 'away')); tr.appendChild(s);
+        tr.appendChild(td(actText(p.act), p.act ? '' : 'muted'));
+        tr.appendChild(td(p.ago < 60 ? 'just now' : ago(Date.now() - p.ago * 1000), 'muted'));
+        tr.appendChild(td(p.since ? new Date(p.since).toLocaleDateString() : '-', 'muted'));
+        tr.appendChild(td(p.border && p.border.indexOf('gif:') === 0 ? 'frame' : (p.border || 'none'), 'mono'));
+        tr.appendChild(td(p.bio || '', 'msg'));
+        var a = el('td', 'act');
+        a.appendChild(btn('Ban name', '', function () { act('/ban', { kind: 'name', value: p.name }, p.name + ' banned', loadOverview); }));
+        a.appendChild(btn('Remove profile', 'danger', function () { confirmBox('Remove ' + p.name + "'s profile?", 'Their name, picture and border are forgotten. They can make a new one.', function () { act('/people/forget', { uid: p.uid }, 'Profile removed', loadPeople); }); }));
+        tr.appendChild(a);
+        tb.appendChild(tr);
+      });
+    });
+  }
+  $('clear-off').addEventListener('click', function () { confirmBox('Remove idle profiles?', 'Profiles not seen for 30 days are deleted.', function () { act('/people/clear-offline', { days: 30 }, null, function (j) { toast(j.removed + ' profiles removed'); loadPeople(); }); }); });
+
+  /* ------------------------------------------------ voice */
+  function loadVoice() {
+    return Promise.all([api('/voice'), loadOverview()]).then(function (r) {
+      var tb = $('vc'); tb.textContent = '';
+      r[0].peers.forEach(function (p) {
+        var tr = el('tr');
+        tr.appendChild(td(p.name));
+        var m = el('td'); m.appendChild(el('span', 'pill ' + (p.deaf ? 'bad' : (p.muted ? 'warn' : 'ok')), p.deaf ? 'deafened' : (p.muted ? 'muted' : 'live'))); tr.appendChild(m);
+        var a = el('td', 'act'); a.appendChild(btn('Disconnect', 'danger', function () { act('/voice/kick', { id: p.id, name: p.name }, p.name + ' disconnected', loadVoice); })); tr.appendChild(a);
+        tb.appendChild(tr);
+      });
+      if (!tb.children.length) { var tr = el('tr'); var c = td('Nobody is in voice.', 'muted'); c.colSpan = 3; tr.appendChild(c); tb.appendChild(tr); }
+    });
+  }
+
+  /* ------------------------------------------------ content */
+  function loadBml() {
+    return api('/bookmarklets').then(function (j) {
+      var tb = $('bml'); tb.textContent = '';
+      j.items.forEach(function (b) {
+        var tr = el('tr');
+        var n = td(b.name); if (b.official) { n.appendChild(document.createTextNode(' ')); n.appendChild(el('span', 'pill warn', 'OFFICIAL')); }
+        if (b.desc) n.appendChild(el('div', 'muted', b.desc));
+        var code = el('div', 'code', b.code); code.hidden = true; n.appendChild(code);
+        tr.appendChild(n);
+        tr.appendChild(td(b.author || 'anon'));
+        tr.appendChild(td(String(b.uses || 0)));
+        tr.appendChild(td(when(b.date), 'muted'));
+        var a = el('td', 'act');
+        a.appendChild(btn('Code', '', function () { code.hidden = !code.hidden; }));
+        a.appendChild(btn(b.official ? 'Unmark official' : 'Mark official', '', function () { act('/bookmarklets/official', { id: b.id, on: !b.official }, 'Updated', loadBml); }));
+        a.appendChild(btn('Delete', 'danger', function () { confirmBox('Delete "' + b.name + '"?', 'It disappears from the library for everyone.', function () { act('/bookmarklets/delete', { id: b.id }, 'Deleted', loadBml); }); }));
+        tr.appendChild(a);
+        tb.appendChild(tr);
+      });
+      if (!tb.children.length) { var tr = el('tr'); var c = td('Nobody has posted one yet.', 'muted'); c.colSpan = 5; tr.appendChild(c); tb.appendChild(tr); }
+    });
+  }
+  function loadClips() {
+    return api('/clips').then(function (j) {
+      var tb = $('clips'); tb.textContent = '';
+      var total = 0;
+      j.clips.forEach(function (c) {
+        total += c.size || 0;
+        var tr = el('tr');
+        var t = el('td'); var link = el('a', '', c.title || c.game || 'clip'); link.href = '/clip/' + c.id; link.target = '_blank'; link.rel = 'noopener noreferrer'; t.appendChild(link); tr.appendChild(t);
+        tr.appendChild(td(c.name || 'anon'));
+        tr.appendChild(td((c.dur ? Math.round(c.dur) : '?') + 's'));
+        tr.appendChild(td(bytes(c.size), 'muted'));
+        tr.appendChild(td(ago(c.at), 'muted'));
+        var a = el('td', 'act'); a.appendChild(btn('Delete', 'danger', function () { confirmBox('Delete this clip?', 'Its share link stops working.', function () { act('/clips/delete', { id: c.id }, 'Clip deleted', loadClips); }); })); tr.appendChild(a);
+        tb.appendChild(tr);
+      });
+      $('clips-sub').textContent = j.clips.length + ' clips, ' + bytes(total) + '.';
+      if (!tb.children.length) { var tr = el('tr'); var c2 = td('No shared clips.', 'muted'); c2.colSpan = 6; tr.appendChild(c2); tb.appendChild(tr); }
+    });
+  }
+
+  /* ------------------------------------------------ machines */
+  var VMN = { win10: 'Windows 10', seat1: 'Linux seat 1', seat2: 'Linux seat 2', seat3: 'Linux seat 3', seat4: 'Linux seat 4', android: 'Android' };
+  function loadVms() {
+    $('vms').textContent = '';
+    $('vms').appendChild(el('div', 'muted', 'Checking machines...'));
+    return api('/vms').then(function (j) {
+      var g = $('vms'); g.textContent = '';
+      j.machines.forEach(function (m) {
+        var c = el('div', 'card stat'); c.appendChild(el('div', 'k', VMN[m.name] || m.name));
+        var v = el('div', 'v'); v.appendChild(el('span', 'pill ' + (m.up ? 'ok' : 'bad'), m.up ? 'running' : 'off')); c.appendChild(v);
+        g.appendChild(c);
+      });
+      var s = $('seats'); s.textContent = '';
+      var kv = el('div', 'kv');
+      (j.seats || []).forEach(function (x) { kv.appendChild(el('span', '', x.id)); kv.appendChild(el('span', '', (x.taken ? 'in use' : 'free') + (x.watching ? ', ' + x.watching + ' watching' : ''))); });
+      s.appendChild(kv);
+    });
+  }
+
+  /* ------------------------------------------------ security */
+  function loadAudit() {
+    return api('/audit').then(function (j) {
+      var tb = $('audit'); tb.textContent = '';
+      j.entries.forEach(function (e) {
+        var tr = el('tr');
+        tr.appendChild(td(new Date(e.at).toLocaleString(), 'muted'));
+        tr.appendChild(td(e.action));
+        tr.appendChild(td(String(e.detail), 'msg'));
+        tr.appendChild(td(e.from, 'mono'));
+        tb.appendChild(tr);
+      });
+    });
+  }
+  $('rotate').addEventListener('click', function () {
+    confirmBox('Rotate the admin URL?', 'The current address stops working immediately. Copy the new one before leaving this page.', function () {
+      act('/rotate', {}, 'New admin URL created', function (j) {
+        var box = $('newurl'); box.textContent = '';
+        box.appendChild(el('div', 'muted', 'New address - save it somewhere safe:'));
+        var c = el('div', 'code', j.url); box.appendChild(c);
+        var b = btn('Copy and switch to it', 'pri', function () {
+          (navigator.clipboard ? navigator.clipboard.writeText(j.url) : Promise.resolve()).catch(function () {}).then(function () { location.replace(j.url); });
+        });
+        b.style.marginTop = '.6rem'; box.appendChild(b);
+        TOKEN = j.url.split('/admin/')[1];
+      });
+    });
+  });
+  $('restart').addEventListener('click', function () {
+    confirmBox('Restart the server?', 'The proxy, chat and voice drop for a couple of seconds.', function () {
+      act('/restart', {}, 'Restarting...', function () { setTimeout(function () { load(current); }, 4000); });
+    });
+  });
+
+  /* ------------------------------------------------ loading */
+  var LOADERS = { overview: loadOverview, site: loadOverview, chat: loadChat, bans: loadOverview, people: loadPeople, voice: loadVoice, bookmarklets: loadBml, clips: loadClips, machines: loadVms, security: loadAudit };
+  function load(s) {
+    var f = LOADERS[s] || loadOverview;
+    return Promise.resolve(f()).then(function () { $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString(); }).catch(function (e) { toast(e.message, true); });
+  }
+  load('overview');
+  setInterval(function () { if (!document.hidden) { if (current === 'overview' || current === 'voice') load(current); } }, 15000);
+})();
+</script>
+</body>
+</html>

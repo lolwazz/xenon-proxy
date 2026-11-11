@@ -7,7 +7,7 @@
  * the words that actually occur in this collection and falls back to leaving a
  * run of letters alone rather than inventing breaks.
  */
-import { readdirSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -91,9 +91,26 @@ function toTitle(file) {
   return out.replace(/\s+/g, ' ') || file;
 }
 
+/* The Arcady import arrived with real titles in its filenames, so it wrote
+   them to arcady-titles.json rather than letting them be re-derived. Guessing
+   a title back out of "ar10minutestilldawn" would undo that. */
+let known = {};
+try {
+  known = JSON.parse(readFileSync(join(DIR, 'arcady-titles.json'), 'utf8'));
+} catch {
+  /* not imported yet - every title comes from the filename */
+}
+/* Titles worked out by scripts/fix-titles.mjs for games that only had a
+   squashed filename. Without this a rebuild would undo them. */
+try {
+  Object.assign(known, JSON.parse(readFileSync(join(DIR, 'titles-fixed.json'), 'utf8')));
+} catch {
+  /* none yet */
+}
+
 const files = readdirSync(DIR).filter((f) => f.toLowerCase().endsWith('.html'));
 const games = files
-  .map((file) => ({ f: file, t: toTitle(file) }))
+  .map((file) => ({ f: file, t: known[file] || toTitle(file) }))
   .sort((a, b) => a.t.localeCompare(b.t, 'en', { numeric: true }));
 
 writeFileSync(join(DIR, 'index.json'), JSON.stringify(games));

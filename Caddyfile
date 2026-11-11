@@ -1,0 +1,72 @@
+{
+	auto_https disable_redirects
+}
+
+xennoonnn.duckdns.org:443, xennoonnn.duckdns.org:8443 {
+	log {
+		output file access.log
+	}
+
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+		resolvers 1.1.1.1 8.8.8.8
+		propagation_delay 30s
+	}
+
+	# Any WebSocket belongs to the proxy - WordPress never opens one. Safety
+	# net so a transport path we forget cannot fall through to the portal,
+	# which is how /wisp/ broke.
+	@ws {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @ws {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# The proxy lives under /x/ because WordPress has the root. handle_path
+	# STRIPS the prefix, so /x/ -> / and /x/healthz -> /healthz. The portal
+	# builds both of those (it appends /healthz to the endpoint), so an exact
+	# rewrite of just /x/ is not enough.
+	redir /x /x/ 308
+	handle_path /x/* {
+		reverse_proxy 127.0.0.1:8080 {
+			flush_interval -1
+		}
+	}
+
+	# Assets and APIs the proxy serves from the root, referenced absolutely
+	# by its own pages and by the service worker.
+	@proxy path /browser.css /browser.js /sw.js /favicon.ico \
+	            /uv/* /scram/* /baremux/* /baremod/* /epoxy/* /libcurl/* \
+	            /wisp/* /wisp /ruffle/* /bare/* /service/* /scramjet/* \
+	            /flash/* /api/* /adblock/* /img /img/* /g/* /brand/* /cursors/* /themes/* /studio/* /vm/* /pc/* /pcws /pcws/* /fx/* /cdn/* /healthz
+	handle @proxy {
+		reverse_proxy 127.0.0.1:8080 {
+			flush_interval -1
+		}
+	}
+
+	# Everything else is the WordPress portal.
+	handle {
+		replace {
+			"https://xenonsschoollearning.online" "https://xennoonnn.duckdns.org"
+			"http://xenonsschoollearning.online" "https://xennoonnn.duckdns.org"
+			"xenonsschoollearning.online" "xennoonnn.duckdns.org"
+		}
+
+		reverse_proxy https://xenonsschoollearning.online {
+			header_up Host xenonsschoollearning.online
+			header_up X-Forwarded-Host xennoonnn.duckdns.org
+			header_up -Accept-Encoding
+
+			header_down Location "xenonsschoollearning.online" "xennoonnn.duckdns.org"
+			header_down Set-Cookie "xenonsschoollearning.online" "xennoonnn.duckdns.org"
+
+			transport http {
+				tls
+				tls_server_name xenonsschoollearning.online
+			}
+		}
+	}
+}

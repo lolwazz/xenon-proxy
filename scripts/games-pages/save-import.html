@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>saves</title>
+<script>
+/* Writes game saves copied from the games' old home (the proxy's
+   save-export.html) into this origin. Nothing already here is overwritten:
+   a localStorage key that exists is kept, and an object store that already
+   has records is left alone, so playing here first always wins. Only the
+   portal's own domains can send saves.
+   With overwrite (the player's Load button, from a save file) it is the
+   other way round: the file wins, and each store it carries is replaced. */
+(function () {
+  'use strict';
+  var ALLOWED = /^https:\/\/(www\.|site\.|2\.)?(zpack\.beauty|xenonsschoollearning\.online)$|^http:\/\/localhost(:\d+)?$/;
+  if (window.parent === window) return;
+  var overwrite = false;
+
+  function req(r) { return new Promise(function (ok, no) { r.onsuccess = function () { ok(r.result); }; r.onerror = function () { no(r.error); }; }); }
+
+  function importLs(ls) {
+    var n = 0;
+    for (var k in ls) {
+      if (!Object.prototype.hasOwnProperty.call(ls, k)) continue;
+      try { if (overwrite || localStorage.getItem(k) === null) { localStorage.setItem(k, ls[k]); n++; } } catch (e) {}
+    }
+    return n;
+  }
+
+  function openFor(d) {
+    return new Promise(function (ok, no) {
+      var r = indexedDB.open(d.name, d.version);
+      r.onupgradeneeded = function () {
+        var db = r.result;
+        d.stores.forEach(function (s) {
+          if (db.objectStoreNames.contains(s.name)) return;
+          var opts = { autoIncrement: !!s.autoIncrement };
+          if (s.keyPath !== null && s.keyPath !== undefined) opts.keyPath = s.keyPath;
+          var st = db.createObjectStore(s.name, opts);
+          (s.indexes || []).forEach(function (i) {
+            try { st.createIndex(i.name, i.keyPath, { unique: i.unique, multiEntry: i.multiEntry }); } catch (e) {}
+          });
+        });
+      };
+      r.onsuccess = function () { ok(r.result); };
+      /* Already here at a newer version: open it as it is. */
+      r.onerror = function (e) {
+        e.preventDefault();
+        var r2 = indexedDB.open(d.name);
+        r2.onsuccess = function () { ok(r2.result); };
+        r2.onerror = function () { no(r2.error); };
+      };
+    });
+  }
+
+  function importDb(d) {
+    return openFor(d).then(function (db) {
+      return d.stores.reduce(function (p, s) {
+        return p.then(function () {
+          if (!db.objectStoreNames.contains(s.name)) return 0;
+          return req(db.transaction(s.name, 'readonly').objectStore(s.name).count()).then(function (count) {
+            if (count > 0 && !overwrite) return 0;
+            return new Promise(function (ok) {
+              var tx = db.transaction(s.name, 'readwrite');
+              var st = tx.objectStore(s.name);
+              if (overwrite) st.clear();
+              var inline = st.keyPath !== null;
+              for (var i = 0; i < s.vals.length; i++) {
+                try { if (inline) st.put(s.vals[i]); else st.put(s.vals[i], s.keys[i]); } catch (e) {}
+              }
+              tx.oncomplete = function () { ok(s.vals.length); };
+              tx.onerror = tx.onabort = function () { ok(0); };
+            });
+          });
+        });
+      }, Promise.resolve(0)).then(function () { db.close(); return 1; });
+    }).catch(function () { return 0; });
+  }
+
+  window.addEventListener('message', function (e) {
+    if (e.source !== window.parent || !ALLOWED.test(e.origin)) return;
+    var d = e.data;
+    if (!d || d.xnSaves !== 'import') return;
+    overwrite = d.overwrite === true;
+    var keys = importLs(d.ls || {});
+    Promise.all((d.idb || []).map(importDb)).then(function (done) {
+      var dbs = done.reduce(function (a, b) { return a + b; }, 0);
+      window.parent.postMessage({ xnSaves: 'done', keys: keys, dbs: dbs }, e.origin);
+    });
+  });
+
+  window.parent.postMessage({ xnSaves: 'ready' }, '*');
+})();
+</script>

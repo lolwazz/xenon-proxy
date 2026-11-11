@@ -3,4 +3,31 @@ node_modules/
 npm-debug.log
 launcher.log
 public/g/
-backend/data/
+backend/data/*
+!backend/data/personalities.js
+deploy/Caddyfile.local
+site-local.log
+site-local.out.log
+
+# profiles, avatars and shared clips written at runtime
+/data/
+
+ADMIN-URL.txt
+
+# Never on GitHub / Render (2026-11-11): visitor logs (IP addresses), local
+# backups, old copies, Windows binaries, and the VM and frame files, which
+# are far too big for GitHub and Render.
+*.log
+*.log.gz
+access.log
+backups/
+vendor/
+s3site/
+public/vm/
+public/frames/
+*.bak
+*.pre-*
+server.js.pre-*
+Caddyfile.bak
+p.html
+startup-disabled/

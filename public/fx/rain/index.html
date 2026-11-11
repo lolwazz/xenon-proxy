@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rain</title>
+<style>
+/* Loaded inside a fixed, pointer-events:none iframe on the site, so this
+   document is nothing but the canvas - no scrollbars, no background of its
+   own, nothing to click. */
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000}
+#container{position:absolute;inset:0;display:block}
+
+/* The engine is a slideshow. It picks the scene from the hash, falls back to
+   the first .slide, then looks up the nav item whose href matches and marks it
+   current - so a nav has to exist even though there is nowhere to navigate to
+   with a single scene. Both stay invisible; the canvas is the whole page. */
+.slideshow{position:absolute;inset:0}
+.slide{position:absolute;inset:0}
+.slideshow__nav{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden}
+</style>
+</head>
+<body>
+
+<div class="slideshow">
+  <canvas width="1" height="1" id="container"></canvas>
+  <div class="slide" id="slide-1" data-weather="rain"></div>
+  <nav class="slideshow__nav" aria-hidden="true">
+    <a class="nav-item" href="#slide-1" tabindex="-1"></a>
+  </nav>
+</div>
+
+<script>
+/* Pick the scene before the engine loads, since it reads data-weather off the
+   slide during start-up.
+ *
+ * Only presets that are known to work are allowed. An unknown name leaves the
+ * engine dereferencing an undefined preset and nothing renders; "storm" is
+ * left out for a different reason - its lightning flash reaches for a global
+ * Quint ease that this bundle keeps module-private, so it throws on the first
+ * flash. Every other preset has no flash and never touches it. */
+(function(){
+  var OK = { rain: 1, drizzle: 1, sunny: 1, fallout: 1 };
+  var w = new URLSearchParams(location.search).get('w') || 'rain';
+  if (!OK[w]) { w = 'rain'; }
+  document.getElementById('slide-1').setAttribute('data-weather', w);
+})();
+</script>
+<script src="js/index.min.js"></script>
+</body>
+</html>

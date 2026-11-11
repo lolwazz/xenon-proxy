@@ -1,15 +1,19 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Xenon</title>
-<link rel="stylesheet" href="/browser.css">
+<link rel="icon" href="/brand/xenon-32.png" sizes="32x32">
+<link rel="icon" href="/brand/xenon-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="/brand/xenon-180.png">
+<link rel="stylesheet" href="/browser.css?v=3">
 </head>
 <body>
 
 <div id="boot">
   <h1>xenon</h1>
+  <div id="bootbar"><i></i></div>
   <p id="bootmsg">starting</p>
   <button id="bootreset" hidden>Reset and retry</button>
 </div>
@@ -17,31 +21,142 @@
 <div id="shell" hidden>
   <div id="chrome">
     <div id="tabstrip">
-      <div id="tabs" style="display:flex;gap:2px"></div>
-      <button id="newtab" title="New tab">+</button>
+      <div id="tabs"></div>
+      <button id="newtab" title="New tab (Ctrl+T)">+</button>
     </div>
     <div id="toolbar">
       <button class="nav" id="back" title="Back">&#8592;</button>
       <button class="nav" id="fwd" title="Forward">&#8594;</button>
       <button class="nav" id="reload" title="Reload">&#8635;</button>
+      <button class="nav" id="home" title="New tab page">&#8962;</button>
       <div id="omni">
-        <input id="url" type="text" spellcheck="false" placeholder="Search or enter URL">
+        <span id="omniico" aria-hidden="true"></span>
+        <input id="url" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter URL">
+        <button class="nav" id="star" title="Bookmark this page (Ctrl+D)">&#9734;</button>
       </div>
-      <button class="nav" id="star" title="Bookmark this page">&#9734;</button>
+      <button class="tbtn" id="btn-bml" title="Bookmarklets (Ctrl+Shift+B)"><span class="ico">&#9889;</span><span class="lbl">Bookmarklets</span></button>
+      <button class="tbtn" id="btn-dev" title="Dev tools (F12)"><span class="ico">&#60;/&#62;</span><span class="lbl">Dev tools</span></button>
       <select id="engine" title="Proxy engine">
         <option value="scramjet">Scramjet</option>
         <option value="uv">Ultraviolet</option>
       </select>
+      <div id="regionwrap">
+        <button class="nav" id="region" title="Exit region" aria-haspopup="true" aria-expanded="false">
+          <span id="regiondot"></span><span id="regionname">Direct</span>
+        </button>
+        <div id="regionmenu" hidden>
+          <p class="rm-head">Exit region</p>
+          <div id="regionlist"></div>
+          <p class="rm-foot">Relays are run by other people. Traffic passes through their server.</p>
+        </div>
+      </div>
     </div>
     <div id="bookmarks"></div>
+    <div id="loadbar"><i></i></div>
   </div>
-  <div id="views"></div>
+  <div id="main">
+    <div id="views">
+      <div id="ntp" hidden>
+        <div class="ntp-glow" aria-hidden="true"></div>
+        <div class="ntp-inner">
+          <p id="ntp-clock"></p>
+          <h2 class="ntp-logo">xenon</h2>
+          <form id="ntform" autocomplete="off">
+            <input id="ntinput" type="text" spellcheck="false" placeholder="Search the web or type a URL">
+            <button id="ntgo" type="submit">Go</button>
+          </form>
+          <div id="ntp-tiles"></div>
+          <div class="ntp-tools">
+            <button type="button" class="ntp-chip" data-open="bml">&#9889; Bookmarklet library</button>
+            <button type="button" class="ntp-chip" data-open="dev">&#60;/&#62; Dev tools</button>
+            <button type="button" class="ntp-chip" id="ntp-import">&#128278; Import bookmarks</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside id="drawer" hidden>
+      <div class="dr-head">
+        <div class="dr-tabs" role="tablist">
+          <button type="button" class="dr-tab" data-pane="bml">&#9889; Bookmarklets</button>
+          <button type="button" class="dr-tab" data-pane="dev">&#60;/&#62; Dev tools</button>
+        </div>
+        <button type="button" class="nav" id="dr-close" title="Close (Esc)">&#10005;</button>
+      </div>
+
+      <section class="dr-pane" id="pane-bml">
+        <div class="bml-top">
+          <input id="bml-q" type="search" placeholder="Search bookmarklets" autocomplete="off">
+          <button type="button" class="btn-prim" id="bml-new">+ Post</button>
+        </div>
+        <div class="chips" id="bml-filters">
+          <button type="button" class="chip on" data-f="all">All</button>
+          <button type="button" class="chip" data-f="official">Official</button>
+          <button type="button" class="chip" data-f="popular">Popular</button>
+          <button type="button" class="chip" data-f="new">New</button>
+          <button type="button" class="chip" data-f="saved">Pinned</button>
+          <button type="button" class="chip" data-f="mine">Mine</button>
+        </div>
+        <form id="bml-form" hidden autocomplete="off">
+          <p class="f-head">Post a bookmarklet</p>
+          <input id="bf-name" maxlength="48" placeholder="Name" required>
+          <input id="bf-desc" maxlength="240" placeholder="What does it do?">
+          <textarea id="bf-code" rows="6" spellcheck="false" placeholder="Paste the bookmarklet (javascript:... is fine)" required></textarea>
+          <input id="bf-author" maxlength="24" placeholder="Your name (optional)">
+          <p class="f-note">Everyone can see and run what you post. Only you can delete it, from this browser.</p>
+          <div class="f-row">
+            <button type="button" class="btn" id="bf-test">Test on this page</button>
+            <span class="sp"></span>
+            <button type="button" class="btn" id="bf-cancel">Cancel</button>
+            <button type="submit" class="btn-prim" id="bf-post">Post</button>
+          </div>
+          <p class="f-err" id="bf-err"></p>
+        </form>
+        <div id="bml-list"></div>
+        <details class="owner">
+          <summary>Owner</summary>
+          <p class="f-note">Owner key from <code>.env</code> (<code>BOOKMARKLET_ADMIN</code>). With it, your posts show as Official and you can delete any post.</p>
+          <div class="f-row"><input id="bml-admin" type="password" placeholder="Owner key" autocomplete="off"><button type="button" class="btn" id="bml-admin-save">Save</button></div>
+          <p class="f-note" id="bml-admin-state"></p>
+        </details>
+      </section>
+
+      <section class="dr-pane" id="pane-dev">
+        <div class="dev-site" id="dev-site"></div>
+        <div class="dev-grid">
+          <button type="button" class="dev-card" data-dev="eruda"><b>Console &amp; Inspector</b><span>Console, elements, network, storage, sources. F12.</span></button>
+          <button type="button" class="dev-card" data-dev="edit"><b>Edit page</b><span>Type anywhere on the page. <em id="dev-edit-state">off</em></span></button>
+          <button type="button" class="dev-card" data-dev="source"><b>View source</b><span>The live HTML of this page.</span></button>
+          <button type="button" class="dev-card" data-dev="outline"><b>Outline boxes</b><span>Draw a border round every element. <em id="dev-outline-state">off</em></span></button>
+          <button type="button" class="dev-card" data-dev="pick"><b>Pick element</b><span>Click something on the page to delete it.</span></button>
+          <button type="button" class="dev-card" data-dev="reset"><b>Reset proxy</b><span>Clear the worker and caches if sites stop loading.</span></button>
+        </div>
+        <p class="f-head">Run JavaScript on this page</p>
+        <textarea id="dev-js" rows="7" spellcheck="false" placeholder="document.title = 'hi'"></textarea>
+        <div class="f-row">
+          <button type="button" class="btn-prim" id="dev-run">Run (Ctrl+Enter)</button>
+          <span class="sp"></span>
+          <button type="button" class="btn" id="dev-post">Post as bookmarklet</button>
+        </div>
+        <pre id="dev-out"></pre>
+      </section>
+    </aside>
+  </div>
 </div>
+
+<div id="modal" hidden>
+  <div class="md-box">
+    <div class="md-head"><b id="md-title"></b><span class="sp"></span><button type="button" class="btn" id="md-copy">Copy</button><button type="button" class="nav" id="md-close">&#10005;</button></div>
+    <pre id="md-body"></pre>
+  </div>
+</div>
+<div id="toast" hidden></div>
 
 <script src="/uv/uv.bundle.js"></script>
 <script src="/uv/uv.config.js"></script>
 <script src="/scram/scramjet.all.js"></script>
 <script src="/baremux/index.js"></script>
-<script src="/browser.js"></script>
+<script src="/browser.js?v=7"></script>
+<script src="/tools.js?v=7"></script>
 </body>
 </html>

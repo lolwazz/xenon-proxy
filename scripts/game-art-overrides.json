@@ -1,0 +1,23 @@
+{
+  "_comment": "Exact Wikipedia article titles for games the search guesses wrong or misses. Keyed by the title as it appears in the game list. An empty string means 'no article exists, stop trying'.",
+
+  "Crossy Road": "Crossy Road",
+  "Minecraft1 8 8": "Minecraft",
+  "Eaglercraft .1.5.2": "Minecraft",
+  "Rocketleague": "Rocket League",
+  "Fridaynightfunkin": "Friday Night Funkin'",
+  "Geometry Dash Lite": "Geometry Dash",
+  "Subway Surfers Barcelona": "Subway Surfers",
+  "Ms Pacman": "Ms. Pac-Man",
+  "Worldshardestgame": "The World's Hardest Game",
+  "Paper IO": "Paper.io",
+  "Bit Life": "BitLife",
+  "Bloons": "Bloons TD",
+  "Wordle": "Wordle",
+  "1v1 LOL": "1v1.LOL",
+  "Learntofly": "Learn to Fly",
+  "Tunnel Rush": "",
+  "Slope": "",
+  "Vex": "",
+  "Ovo": ""
+}

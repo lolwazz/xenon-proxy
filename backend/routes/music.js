@@ -583,8 +583,18 @@ async function itunesPreviewFor(title, artist) {
 
 async function resolvePlayIntent(parsed, metaHint) {
   const cacheKey = `play:${parsed.kind}:${parsed.id}:${metaHint?.title || ''}:${metaHint?.artist || ''}`;
+  /* A resolved stream url only lives as long as its signature. SoundCloud
+     hands out cf-media.sndcdn.com links carrying a Policy that expires within
+     minutes, so a 45 minute cache spends most of that window serving a link
+     that answers 403 - which this proxy then reports as a 502 and nothing
+     plays. Intents that carry no signed url (a YouTube video id, an embed)
+     have nothing to go stale, so they keep the long cache. */
   const cached = cacheGet(playCache, cacheKey, 1000 * 60 * 45);
-  if (cached) return cached;
+  if (cached) {
+    if (cached.provider !== 'audio') return cached;
+    const fresh = cacheGet(playCache, cacheKey, 1000 * 60);
+    if (fresh) return fresh;
+  }
 
   let intent = null;
 

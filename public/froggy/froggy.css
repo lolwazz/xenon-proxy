@@ -1,0 +1,50 @@
+/* Froggy skin - layered on top of the recoloured browser.css that server.js
+   serves to froggy.* hosts. Only shape and personality live here; the colour
+   swap itself is done in froggy.mjs so it tracks browser.css automatically. */
+@font-face{font-family:"Pusab";src:url("/froggy/pusab.otf") format("opentype");font-display:swap}
+
+:root{--frog:#59e84c;--frog-dark:#33b52c;--frog-light:#86ff76}
+
+body{background:
+  radial-gradient(1200px 700px at 50% -10%,rgba(89,232,76,.14),transparent 60%),
+  radial-gradient(900px 600px at 110% 110%,rgba(51,181,44,.12),transparent 60%),
+  var(--bg)}
+
+/* Chunky outlined game-title lettering, like the font was made for. */
+.fr-title{font-family:"Pusab",system-ui,sans-serif;font-weight:400;letter-spacing:.04em;
+  /* browser.css paints these headings as clipped gradient text; undo that */
+  background:none!important;-webkit-background-clip:border-box!important;background-clip:border-box!important;
+  color:var(--frog-light)!important;-webkit-text-fill-color:var(--frog-light);
+  -webkit-text-stroke:2px #000;paint-order:stroke fill;
+  text-shadow:0 4px 0 #000,0 0 28px rgba(89,232,76,.45)}
+
+/* ---------- boot ---------- */
+#boot{gap:.9rem}
+#boot .fr-mascot{width:150px;height:150px}
+#boot h1.fr-title{font-size:3.2rem}
+#bootbar{border:2px solid #000;border-radius:999px;background:rgba(0,0,0,.35);height:12px}
+#bootbar i{background:linear-gradient(90deg,var(--frog-dark),var(--frog-light))!important;border-radius:999px}
+
+/* ---------- new tab page ---------- */
+.ntp-glow{background:radial-gradient(600px 380px at 50% 32%,rgba(89,232,76,.22),transparent 70%)!important}
+.ntp-hero{display:flex;align-items:center;justify-content:center;gap:1rem;margin:.2rem 0 .4rem}
+.ntp-hero .fr-mascot{width:clamp(84px,12vw,128px);height:auto}
+.ntp-logo.fr-title{font-size:clamp(2.8rem,8vw,4.6rem)}
+#ntform{border:2px solid #000!important;border-radius:999px!important;box-shadow:0 4px 0 #000,0 10px 30px rgba(0,0,0,.35)!important}
+#ntgo{font-family:"Pusab",system-ui,sans-serif;background:var(--frog)!important;color:#062006!important;
+  border:2px solid #000!important;border-radius:999px!important}
+#ntgo:hover{background:var(--frog-light)!important}
+
+/* the mascot: a slow idle bob, and a hop when poked */
+.fr-mascot{display:block;filter:drop-shadow(0 6px 0 rgba(0,0,0,.55));transform-origin:50% 100%;
+  animation:fr-bob 3.2s ease-in-out infinite;cursor:pointer;user-select:none;-webkit-user-drag:none}
+.fr-mascot.hop{animation:fr-hop .55s cubic-bezier(.3,1.6,.5,1)}
+@keyframes fr-bob{0%,100%{transform:translateY(0) rotate(-2deg)}50%{transform:translateY(-6px) rotate(2deg)}}
+@keyframes fr-hop{0%{transform:scale(1,1)}25%{transform:scale(1.15,.8)}55%{transform:translateY(-26px) scale(.92,1.1)}100%{transform:translateY(0) scale(1,1)}}
+
+/* tabs and toolbar pick up the frog green */
+.tab.on::before{background:linear-gradient(90deg,var(--frog-dark),var(--frog-light))!important}
+#omni:focus-within{box-shadow:0 0 0 2px rgba(89,232,76,.45)}
+
+@media (prefers-reduced-motion:reduce){.fr-mascot,.fr-mascot.hop{animation:none}}
+

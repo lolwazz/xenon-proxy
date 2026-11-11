@@ -1,0 +1,72 @@
+# Xenon on one server: the portal as static files, the proxy behind it.
+#
+#   XENON_SITES  site addresses, comma separated
+#                e.g. "xenonsschoollearning.online, www.xenonsschoollearning.online"
+#   XENON_ROOT   folder holding the portal (default /var/www/xenon)
+#
+# Replaces the WordPress host. The portal pages still ask WordPress page 171
+# where the proxy is; that question is answered here, with this server's own
+# address, so no page needs to know which host it is on.
+
+{$XENON_SITES} {
+	# Any WebSocket belongs to the proxy (wisp, the PC/VM bridges).
+	@ws {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @ws {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	handle /wp-json/wp/v2/pages/171 {
+		header Content-Type application/json
+		header Cache-Control no-store
+		respond `{"id":171,"content":{"rendered":"<p>{http.request.scheme}://{http.request.hostport}/x</p>\n"}}` 200
+	}
+
+	# The proxy's own start page lives under /x/ because the portal has the
+	# root. handle_path strips the prefix: /x/healthz -> /healthz.
+	# The portal opens sites as /x?u=<url>, so /x itself must keep its query
+	# (a redirect to /x/ would drop it).
+	@xroot path /x
+	handle @xroot {
+		rewrite * /?{query}
+		reverse_proxy 127.0.0.1:8080 {
+			flush_interval -1
+		}
+	}
+	handle_path /x/* {
+		reverse_proxy 127.0.0.1:8080 {
+			flush_interval -1
+		}
+	}
+
+	# Everything the proxy serves from the root, referenced absolutely by its
+	# own pages and by the service worker.
+	@proxy path /browser.css /browser.js /tools.js /clip-agent.js /sw.js /favicon.ico /healthz \
+	            /eruda/* /frames/* /voice \
+	            /uv/* /scram/* /baremux/* /baremod/* /epoxy/* /libcurl/* \
+	            /wisp /wisp/* /bare/* /service/* /scramjet/* /ruffle/* /flash/* \
+	            /api/* /adblock/* /img /img/* /cdn/* /g/* /brand/* /cursors/* \
+	            /themes/* /studio /studio/* /vm /vm/* /pc /pc/* /pcws /pcws/* \
+	            /fx/* /cloudinit/* /login /wp-json/wp/v2/comments
+	handle @proxy {
+		reverse_proxy 127.0.0.1:8080 {
+			flush_interval -1
+		}
+	}
+
+	# Everything else is the portal.
+	handle {
+		root * {$XENON_ROOT:/var/www/xenon}
+		encode zstd gzip
+		file_server
+	}
+
+	log {
+		output file {$XENON_LOG:/var/log/caddy/xenon.log} {
+			roll_size 20MiB
+			roll_keep 3
+		}
+	}
+}
