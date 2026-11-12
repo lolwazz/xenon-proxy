@@ -151,6 +151,18 @@ app.get(/^\/g\/.+\.html?$/i, (req, res, next) => {
   });
 });
 
+/* Avatar borders (2026-11-11): public/frames is 289 MB, too big for the git
+   repo, so a copy without it (the Render backup) sends /frames/* to the games
+   site on Cloudflare, which carries the same files. The PC has the folder and
+   never takes this path. */
+if (!existsSync(join(__dirname, 'public', 'frames', 'frames.json'))) {
+  const FRAMES_URL = (process.env.FRAMES_URL || 'https://games.zpack.beauty/frames').replace(/\/+$/, '');
+  app.get(/^\/frames\/[\w./-]+$/, (req, res) => {
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.redirect(302, FRAMES_URL + req.path.slice('/frames'.length));
+  });
+}
+
 // public/ is mounted FIRST so our own uv.config.js overrides the package default.
 app.use(express.static(join(__dirname, 'public')));
 app.use('/uv/',      express.static(pkg('@titaniumnetwork-dev/ultraviolet/dist')));

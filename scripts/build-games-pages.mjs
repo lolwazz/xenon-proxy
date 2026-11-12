@@ -70,6 +70,11 @@ fs.copyFileSync(path.join(ROOT, 'public', 'save-export.html'), path.join(PUB, 's
 fs.copyFileSync(path.join(ROOT, 'scripts', 'games-pages', 'xn-watch.js'), path.join(PUB, 'xn-watch.js'));
 files += 3;
 
+// Avatar borders: the Render backup proxy has no copy (too big for git) and
+// redirects /frames/* here. Every file is well under the 25 MB limit.
+fs.cpSync(path.join(ROOT, 'public', 'frames'), path.join(PUB, 'frames'), { recursive: true });
+files += fs.readdirSync(path.join(PUB, 'frames'), { recursive: true }).length;
+
 const enc = (r) => r.split('/').map(encodeURIComponent).join('/');
 // Pages will not match a rule written with %-escapes, so a file whose name
 // needs them (spaces, commas, brackets) sends its whole folder to the proxy.
@@ -110,6 +115,10 @@ fs.writeFileSync(path.join(PUB, '_headers'), [
   '  Cache-Control: no-cache',
   '/xn-watch.js',
   '  Cache-Control: public, max-age=3600',
+  // One rule: Pages joins the headers of every rule that matches.
+  '/frames/*',
+  '  Cache-Control: public, max-age=86400',
+  '  Access-Control-Allow-Origin: *',
   '',
 ].join('\n'));
 
