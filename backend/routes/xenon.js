@@ -249,6 +249,7 @@ function grantPremium(pid, days, via) {
 setInterval(() => { if (S.giveaway && !S.giveaway.done && S.giveaway.endsAt <= now()) finishGiveaway(); }, 10e3).unref();
 
 /* ------------------------------------------------------------ live state (polled by every page) */
+const stealthFor = new Map();   // pid -> expiry, set by staff 'stealth'
 router.get('/live', (req, res) => {
   res.set('Cache-Control', 'no-store');
   const pid = who(req);
@@ -262,6 +263,8 @@ router.get('/live', (req, res) => {
   if (pid) {
     const role = C.roleOf(pid);
     out.me = { role, rank: C.rankOf(pid), perms: permsOf(pid), premium: S.premiumOn && isPremium(pid), tag: S.tagOf[pid] || '' };
+    const st = stealthFor.get(pid);
+    if (st) { stealthFor.delete(pid); if (st > now()) out.stealth = true; }
   }
   res.json(out);
 });
@@ -570,7 +573,7 @@ router.post('/staff', json, (req, res) => {
     gotd: 'gotd', gotd_clear: 'gotd', links: 'links', premium: 'premium', premium_revoke: 'premium',
     giveaway: 'giveaway', giveaway_draw: 'giveaway', giveaway_cancel: 'giveaway', premium_switch: 'premium',
     tag_create: 'tags', tag_delete: 'tags', tag_assign: 'tags', tag_perms: 'tagperms',
-    role: 'tagperms', mute: 'mute', say: 'say', clear: 'clear', slow: 'slow', lock: 'slow', banner: 'banner',
+    role: 'tagperms', mute: 'mute', stealth: 'mute', say: 'say', clear: 'clear', slow: 'slow', lock: 'slow', banner: 'banner',
   }[act];
   if (!need) return res.status(400).json({ error: 'unknown action' });
   if (!can(pid, need)) return res.status(403).json({ error: 'you do not have the "' + need + '" permission' });
@@ -706,6 +709,17 @@ router.post('/staff', json, (req, res) => {
       if (C.rankOf(t) >= mine || (want && ROLE_RANK[want] >= mine)) return res.status(403).json({ error: 'your rank cannot do that' });
       C.setRole(t, want);
       if (want) C.say('🛡️ **' + C.nameOf(t) + '** is now ' + { admin: 'an Admin', superadmin: 'a Super Admin', supreme: 'SUPREME' }[want] + '.', { name: 'Xenon', color: '#c084fc' });
+      return ok();
+    }
+    /* Staff stealth (2026-11-12): the person's page picks this up on its next
+       /live poll (every 30 s) and switches to stealth on their next click -
+       browsers only open the about:blank tab from a click. Kept in memory
+       for 10 minutes; a restart forgets it. */
+    case 'stealth': {
+      const t = target(b);
+      if (!t) return res.status(404).json({ error: 'nobody by that name' });
+      if (t !== pid && C.rankOf(t) >= mine) return res.status(403).json({ error: 'your rank cannot do that' });
+      stealthFor.set(t, now() + 10 * 60e3);
       return ok();
     }
     case 'mute': {
