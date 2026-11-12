@@ -100,9 +100,9 @@
   }
   buildRegionMenu();
 
-  var engine = pref('xenon-engine', 'scramjet');
+  var engine = pref('xenon-engine', 'uv');
   // Anything unrecognised falls back to the default rather than breaking.
-  if (engine !== 'uv') engine = 'scramjet';
+  if (engine !== 'scramjet') engine = 'uv';
   engineEl.value = engine;
 
   /* ---------- url helpers ---------- */
