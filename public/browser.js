@@ -111,6 +111,8 @@
     if (!v) return null;
     if (/^https?:\/\//i.test(v)) return v;
     if (v.indexOf(' ') === -1 && v.indexOf('.') > 0) return 'https://' + v;
+    // The Render backup (PC off) cannot load DuckDuckGo, so it searches Google.
+    if (/^go\.zpack\.beauty$|\.onrender\.com$/.test(location.hostname)) return 'https://www.google.com/search?q=' + encodeURIComponent(v);
     return 'https://duckduckgo.com/?q=' + encodeURIComponent(v);
   }
   function hostOf(u) {
