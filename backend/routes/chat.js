@@ -535,7 +535,9 @@ router.post('/react', express.json({ limit: '2kb' }), (req, res) => {
   const e = String(b.e || '').trim();
   const fp = fpOf(b.token);
   if (!fp) return res.status(403).json({ error: 'no token' });
-  if (!e || e.length > 16 || !EMOJI.test(e) || /[<>&"'\sA-Za-z]/.test(e)) return res.status(400).json({ error: 'not an emoji' });
+  /* :name: is a custom picture emoji (2026-11-12). */
+  const custom = /^:[a-z0-9_]{1,30}:$/.test(e);
+  if (!e || (!custom && (e.length > 16 || !EMOJI.test(e) || /[<>&"'\sA-Za-z]/.test(e)))) return res.status(400).json({ error: 'not an emoji' });
   const name = cleanName(b.name) || 'someone';
   if (!gate(req, res, name)) return;
   const room = roomOf(req, res, b);
