@@ -448,25 +448,40 @@ let botBusy = 0;
 /* Xenon AI answers when someone writes @Xenon / "Xenon AI", or replies to one
    of its lines (2026-11-12). It reads the last few lines for context. */
 const MENTION = /(^|[^\w@])@xenon\b|\bxenon\s*ai\b/i;
+/* Conversation mode (2026-11-13): once someone talks to Xenon AI, it keeps
+   answering their next lines without an @ for 2 minutes after its last
+   reply. It stops when they say bye/stop, or @ someone else. */
+const CONVO_MS = 2 * 60e3;
+const convo = new Map();          // pid -> time the conversation lapses
+const BYE = /\b(bye|goodbye|cya|see ya|stop|shut up|go away|leave me alone|that'?s all|nvm)\b/i;
 let botHour = { at: 0, n: 0 };
 C.setMentionHook((msg) => {
   const text = String(msg.text || '');
   const toBot = msg.reply && /^Xenon AI$/i.test(String(msg.reply.name || ''));
-  if (!MENTION.test(text) && !toBot) return;
+  const named = MENTION.test(text) || toBot;
+  const inConvo = msg.pid && (convo.get(msg.pid) || 0) > now();
+  /* Talking to someone else ends it. */
+  if (inConvo && !named && (/(^|\s)@(?!xenon\b)[^\s@]+/i.test(text) || (msg.reply && !toBot))) { convo.delete(msg.pid); return; }
+  if (!named && !inConvo) return;
   if (!msg.pid || C.isMuted(msg.pid) || settings().aiOff || !aiEnabled()) return;
   if (settings().chatLocked && C.rankOf(msg.pid) < 1) return;
-  if (tooSoon('mention:' + msg.pid, 10e3) || botBusy >= 2) return;
+  const bye = BYE.test(text);
+  if (bye) convo.delete(msg.pid);
+  else convo.set(msg.pid, now() + CONVO_MS);
+  if (convo.size > 2000) for (const [k, t] of convo) if (t < now()) convo.delete(k);
+  if (tooSoon('mention:' + msg.pid, 4e3) || botBusy >= 2) return;
   if (now() - botHour.at > 3600e3) botHour = { at: now(), n: 0 };
   if (++botHour.n > 120) return;
   botBusy++;
   const ctx = C.recent(14).filter((m) => m.id !== msg.id).map((m) => (m.bot ? 'Xenon AI' === m.name ? 'assistant' : 'system-note' : 'user') + '|' + m.name + ': ' + m.text.replace(/\s+/g, ' ').slice(0, 300));
   const history = ctx.filter((l) => !l.startsWith('system-note|')).map((l) => { const i = l.indexOf('|'); const role = l.slice(0, i); const body = l.slice(i + 1); return { role, content: role === 'assistant' ? body.replace(/^Xenon AI:\s*/, '') : body }; });
   askAI([
-    { role: 'system', content: 'You are Xenon AI, a member of the public chat room on Xenon, a games site. People talk to you by writing @Xenon. Reply like a chill friend in the chat: short (usually 1-3 sentences, never over 100 words), casual, Discord-style markdown, no greeting every time. Earlier chat lines are given as "name: text" so you know who said what. You are replying to ' + msg.name + '. Never produce anything sexual, hateful or dangerous. Do not do schoolwork or tests for people; offer to explain instead. Never claim to be human.' },
+    { role: 'system', content: 'You are Xenon AI, a member of the public chat room on Xenon, a games site. People talk to you by writing @Xenon. Reply like a chill friend in the chat: short (usually 1-3 sentences, never over 100 words), casual, Discord-style markdown, no greeting every time. Earlier chat lines are given as "name: text" so you know who said what. You are replying to ' + msg.name + (named ? '.' : ', who is in a back-and-forth with you and did not need to @ you.') + (bye ? ' They are saying bye - answer with a short goodbye.' : '') + ' Never produce anything sexual, hateful or dangerous. Do not do schoolwork or tests for people; offer to explain instead. Never claim to be human.' },
     ...history,
     { role: 'user', content: msg.name + ': ' + text.slice(0, 600) },
   ], 25000).then((reply) => {
     C.say(reply.replace(/^Xenon AI:\s*/i, '').slice(0, 1800), { name: 'Xenon AI', color: '#7dd3fc', reply: msg.id });
+    if (!bye && convo.has(msg.pid)) convo.set(msg.pid, now() + CONVO_MS);
   }).catch(() => {}).finally(() => { botBusy--; });
 });
 router.post('/bot/ask', json, async (req, res) => {
