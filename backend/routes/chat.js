@@ -67,6 +67,10 @@ const people = new Map();
    name. Each rank can act on the ranks below it and never on its own. */
 const roles = new Map();
 const mutes = new Map();             // pid -> muted until (ms)
+let auditHook = null;                // (pid, action, detail) - staff log (set by routes/xenon.js)
+let mentionHook = null;              // (msg, room) - Xenon AI answering @Xenon (set by routes/xenon.js)
+const logMod = (pid, action, detail) => { try { if (auditHook) auditHook(pid, action, detail); } catch {} };
+const devOf = new Map();             // pid -> last device it posted from (for ban by name)
 let tagHook = null;                  // pid -> {label,color,font,fx} | null (set by routes/xenon.js)
 try {
   const j = JSON.parse(readFileSync(ROOMS_FILE, 'utf8'));
@@ -445,7 +449,7 @@ router.post('/send', express.json({ limit: '32kb' }), (req, res) => {
   const taken = staffName(name);
   if (taken && taken !== spid) return res.status(403).json({ error: 'that name belongs to a staff member - pick another in Settings' });
   const msg = { id: room.nextId++, name, text, date: new Date().toISOString().slice(0, 19), dev: g.dev };
-  if (token) { msg.owner = fpOf(token); msg.pid = pidOf(token); seen(msg.pid, name, colour); }
+  if (token) { msg.owner = fpOf(token); msg.pid = pidOf(token); seen(msg.pid, name, colour); if (g.dev) devOf.set(msg.pid, g.dev); }
   if (colour) msg.color = colour;
   if (vfx) msg.vfx = vfx;
   if (border) msg.border = border;
@@ -463,6 +467,7 @@ router.post('/send', express.json({ limit: '32kb' }), (req, res) => {
   typing.delete(room.id + '\n' + name);
   if (room.messages.length > KEEP) room.messages = room.messages.slice(-KEEP);
   persist();
+  if (mentionHook && room === general && !msg.bot) { try { mentionHook(msg); } catch {} }
   return res.json({ ok: true, id: msg.id, rev });
 });
 
@@ -498,6 +503,7 @@ function staffName(name) {
 router.post('/delete', express.json({ limit: '4kb' }), (req, res) => {
   const own = ownMessage(req, res, true);
   if (!own) return;
+  if (!own.own) logMod(pidOf(String((req.body || {}).token || '')), 'chat_delete', { name: own.m.name, text: String(own.m.text || '').slice(0, 200) });
   own.room.messages.splice(own.i, 1);
   noteRemoved(own.room, own.m.id);
   persist();
@@ -766,6 +772,7 @@ router.post('/role', express.json({ limit: '2kb' }), (req, res) => {
   if (want) roles.set(target, want); else roles.delete(target);
   touchAuthor(target);
   persist();
+  logMod(pid, 'role', { name: (people.get(target) || {}).name || target, role: want || 'none' });
   res.json({ ok: true, role: want });
 });
 
@@ -785,6 +792,7 @@ router.post('/mute', express.json({ limit: '2kb' }), (req, res) => {
   if (!rankOf(pid) || (rankOf(target) >= rankOf(pid))) return res.status(403).json({ error: 'your rank cannot do that' });
   if (min) mutes.set(target, Date.now() + min * 60000); else mutes.delete(target);
   persist();
+  logMod(pid, min ? 'mute' : 'unmute', { name: (people.get(target) || {}).name || target, min });
   res.json({ ok: true, min });
 });
 
@@ -807,6 +815,7 @@ router.post('/ban', express.json({ limit: '2kb' }), (req, res) => {
   room.messages = room.messages.filter((x) => x.dev !== m.dev);
   for (const id of gone) noteRemoved(room, id);
   persist();
+  logMod(pid, 'ban', { name: m.name, removed: gone.length });
   res.json({ ok: true, removed: gone.length });
 });
 
@@ -1127,9 +1136,39 @@ export const chatAdmin = {
   mute(pid, min) { if (min > 0) mutes.set(pid, Date.now() + min * 60000); else mutes.delete(pid); persist(); },
   touchAuthor(pid) { touchAuthor(pid); persist(); },
   setTagHook(fn) { tagHook = fn; },
+  setAuditHook(fn) { auditHook = fn; },
+  setMentionHook(fn) { mentionHook = fn; },
+  isMuted(pid) { return (mutes.get(pid) || 0) > Date.now(); },
+  /* Recent #general lines, oldest first, for the bot's context. */
+  recent(n = 14) { return general.messages.slice(-n).map((m) => ({ name: m.name, text: String(m.text || ''), bot: Boolean(m.bot), id: m.id })); },
+  find(id) { return general.messages.find((m) => m.id === id) || null; },
+  /* Every line this person sent, in every room. */
+  purgePid(pid) {
+    let n = 0;
+    for (const r of allRooms()) {
+      const gone = r.messages.filter((m) => m.pid === pid).map((m) => m.id);
+      if (!gone.length) continue;
+      r.messages = r.messages.filter((m) => m.pid !== pid);
+      gone.forEach((id) => noteRemoved(r, id)); n += gone.length;
+    }
+    persist(); return n;
+  },
+  /* Ban the devices this person posted from (their messages say which) and
+     delete their lines. Returns null when no message shows a device. */
+  banPid(pid) {
+    const devs = new Set();
+    for (const r of allRooms()) for (const m of r.messages) if (m.pid === pid && m.dev) devs.add(m.dev);
+    if (devOf.has(pid)) devs.add(devOf.get(pid));
+    if (!devs.size) return null;
+    const S = settings();
+    setSettings({ bannedDevices: [...new Set(S.bannedDevices.concat([...devs]))] });
+    return { devices: devs.size, removed: this.purgePid(pid) };
+  },
+  unbanAll() { const n = settings().bannedDevices.length; setSettings({ bannedDevices: [] }); return n; },
   say(text, opts = {}) {
     const msg = { id: general.nextId++, name: String(opts.name || 'Xenon').slice(0, 24), text: String(text).slice(0, MAX_LEN), date: new Date().toISOString().slice(0, 19), bot: true, color: opts.color || '#c084fc' };
     if (opts.att) msg.att = opts.att;
+    if (opts.reply) { const t = general.messages.find((m) => m.id === opts.reply); if (t) msg.reply = { id: t.id, name: t.name, text: snippet(t) }; }
     touch(msg);
     general.messages.push(msg);
     if (general.messages.length > KEEP) general.messages = general.messages.slice(-KEEP);

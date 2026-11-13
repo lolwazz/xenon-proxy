@@ -25,7 +25,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { chatAdmin as C } from './chat.js';
-import { askAI } from './ai.js';
+import { askAI, aiEnabled } from './ai.js';
 import { settings, setSettings } from '../site-settings.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -59,6 +59,8 @@ const S = {
   tagOf: {},                  // pid -> tag id
   themes: [],
   songs: {},
+  reports: [],                // {id, at, by, byName, pid, name, msg, text, reason, open}
+  nextReport: 1,
 };
 try { Object.assign(S, JSON.parse(readFileSync(FILE, 'utf8'))); } catch {}
 let saveT = null;
@@ -74,9 +76,20 @@ function save() {
   }, 800);
 }
 process.on('exit', () => { if (saveT) { clearTimeout(saveT); try { writeFileSync(FILE, JSON.stringify(S)); } catch {} } });
+/* Staff log (2026-11-12): every staff action, from the Staff panel and the
+   chat menus, goes to the file and to an in-memory list the Staff panel shows
+   (the last 500, reloaded from the file on start). */
+const LOG = [];
+try { for (const l of readFileSync(AUDIT, 'utf8').trim().split('\n').slice(-500)) { try { LOG.push(JSON.parse(l)); } catch {} } } catch {}
 function audit(pid, action, detail) {
-  try { appendFileSync(AUDIT, JSON.stringify({ at: new Date().toISOString(), pid, name: C.nameOf(pid), action, detail }) + '\n'); } catch {}
+  let d = detail;
+  if (d && typeof d === 'object') { d = Object.assign({}, d); delete d.token; }
+  const e = { at: new Date().toISOString(), pid, name: C.nameOf(pid), action, detail: d };
+  LOG.push(e);
+  if (LOG.length > 500) LOG.splice(0, LOG.length - 500);
+  try { appendFileSync(AUDIT, JSON.stringify(e) + '\n'); } catch {}
 }
+C.setAuditHook(audit);
 
 /* ------------------------------------------------------------ helpers */
 const now = () => Date.now();
@@ -249,7 +262,10 @@ function grantPremium(pid, days, via) {
 setInterval(() => { if (S.giveaway && !S.giveaway.done && S.giveaway.endsAt <= now()) finishGiveaway(); }, 10e3).unref();
 
 /* ------------------------------------------------------------ live state (polled by every page) */
-const stealthFor = new Map();   // pid -> expiry, set by staff 'stealth'
+/* One-shot orders for one person's page, delivered by their next /live poll
+   (every 30 s): stealth, a warning, a kick. Held 10 minutes in memory. */
+const pending = new Map();      // pid -> {exp, stealth, warn, kick}
+function order(pid, o) { pending.set(pid, Object.assign(pending.get(pid) || {}, o, { exp: now() + 10 * 60e3 })); }
 router.get('/live', (req, res) => {
   res.set('Cache-Control', 'no-store');
   const pid = who(req);
@@ -263,8 +279,11 @@ router.get('/live', (req, res) => {
   if (pid) {
     const role = C.roleOf(pid);
     out.me = { role, rank: C.rankOf(pid), perms: permsOf(pid), premium: S.premiumOn && isPremium(pid), tag: S.tagOf[pid] || '' };
-    const st = stealthFor.get(pid);
-    if (st) { stealthFor.delete(pid); if (st > now()) out.stealth = true; }
+    const o = pending.get(pid);
+    if (o) {
+      pending.delete(pid);
+      if (o.exp > now()) { if (o.stealth) out.stealth = true; if (o.warn) out.warn = o.warn; if (o.kick) out.kick = true; }
+    }
   }
   res.json(out);
 });
@@ -400,8 +419,56 @@ router.post('/themes/ai', json, async (req, res) => {
   }
 });
 
+/* ------------------------------------------------------------ reports (2026-11-12) */
+/* Anyone with a chat name can report a person (and optionally the message).
+   Staff with "mute" see open reports in the Staff panel and close them. */
+router.post('/report', json, (req, res) => {
+  const b = req.body || {};
+  const pid = who(req, b);
+  const myName = C.nameOf(pid);
+  if (!pid || !myName) return res.status(403).json({ error: 'set a chat name first' });
+  if (tooSoon('report:' + pid, 20e3)) return res.status(429).json({ error: 'one report every 20 seconds' });
+  const t = target(b);
+  if (!t) return res.status(404).json({ error: 'nobody by that name' });
+  if (t === pid) return res.status(400).json({ error: 'you cannot report yourself' });
+  const reason = str(b.reason, 300);
+  if (!reason) return res.status(400).json({ error: 'say what they did' });
+  const mid = parseInt(b.msg, 10);
+  const m = Number.isFinite(mid) ? C.find(mid) : null;
+  if (S.reports.some((r) => r.open && r.by === pid && r.pid === t)) return res.status(409).json({ error: 'you already reported them - staff will look' });
+  S.reports.push({ id: S.nextReport++, at: now(), by: pid, byName: myName, pid: t, name: C.nameOf(t), msg: m ? m.id : null, text: m ? String(m.text || '').slice(0, 300) : '', reason, open: true });
+  if (S.reports.length > 1000) S.reports = S.reports.slice(-1000);
+  save();
+  res.json({ ok: true });
+});
+
 /* ------------------------------------------------------------ bot: AI in chat, songs */
 let botBusy = 0;
+
+/* Xenon AI answers when someone writes @Xenon / "Xenon AI", or replies to one
+   of its lines (2026-11-12). It reads the last few lines for context. */
+const MENTION = /(^|[^\w@])@xenon\b|\bxenon\s*ai\b/i;
+let botHour = { at: 0, n: 0 };
+C.setMentionHook((msg) => {
+  const text = String(msg.text || '');
+  const toBot = msg.reply && /^Xenon AI$/i.test(String(msg.reply.name || ''));
+  if (!MENTION.test(text) && !toBot) return;
+  if (!msg.pid || C.isMuted(msg.pid) || settings().aiOff || !aiEnabled()) return;
+  if (settings().chatLocked && C.rankOf(msg.pid) < 1) return;
+  if (tooSoon('mention:' + msg.pid, 10e3) || botBusy >= 2) return;
+  if (now() - botHour.at > 3600e3) botHour = { at: now(), n: 0 };
+  if (++botHour.n > 120) return;
+  botBusy++;
+  const ctx = C.recent(14).filter((m) => m.id !== msg.id).map((m) => (m.bot ? 'Xenon AI' === m.name ? 'assistant' : 'system-note' : 'user') + '|' + m.name + ': ' + m.text.replace(/\s+/g, ' ').slice(0, 300));
+  const history = ctx.filter((l) => !l.startsWith('system-note|')).map((l) => { const i = l.indexOf('|'); const role = l.slice(0, i); const body = l.slice(i + 1); return { role, content: role === 'assistant' ? body.replace(/^Xenon AI:\s*/, '') : body }; });
+  askAI([
+    { role: 'system', content: 'You are Xenon AI, a member of the public chat room on Xenon, a games site. People talk to you by writing @Xenon. Reply like a chill friend in the chat: short (usually 1-3 sentences, never over 100 words), casual, Discord-style markdown, no greeting every time. Earlier chat lines are given as "name: text" so you know who said what. You are replying to ' + msg.name + '. Never produce anything sexual, hateful or dangerous. Do not do schoolwork or tests for people; offer to explain instead. Never claim to be human.' },
+    ...history,
+    { role: 'user', content: msg.name + ': ' + text.slice(0, 600) },
+  ], 25000).then((reply) => {
+    C.say(reply.replace(/^Xenon AI:\s*/i, '').slice(0, 1800), { name: 'Xenon AI', color: '#7dd3fc', reply: msg.id });
+  }).catch(() => {}).finally(() => { botBusy--; });
+});
 router.post('/bot/ask', json, async (req, res) => {
   const b = req.body || {};
   const pid = who(req, b);
@@ -555,7 +622,9 @@ router.get('/staff/info', (req, res) => {
     me: { pid, role: C.roleOf(pid), rank: C.rankOf(pid), perms, name: C.nameOf(pid) },
     allPerms: ALL, fonts: FONTS, fx: FX,
     people, tags: S.tags, wall: S.wall, links: S.links, tv: S.tv, event: S.event, gotd: gameOfDay(),
-    giveaway: S.giveaway, premiumOn: S.premiumOn, notes: S.notes.slice(-20).reverse(), settings: { slowSec: settings().slowSec, chatLocked: settings().chatLocked, announce: settings().announce },
+    giveaway: S.giveaway, premiumOn: S.premiumOn, notes: S.notes.slice(-20).reverse(),
+    reports: perms.includes('mute') ? S.reports.filter((r) => r.open).slice(-100).reverse() : [],
+    log: perms.includes('tagperms') ? LOG.slice(-300).reverse() : null, settings: { slowSec: settings().slowSec, chatLocked: settings().chatLocked, announce: settings().announce },
   });
 });
 
@@ -573,7 +642,7 @@ router.post('/staff', json, (req, res) => {
     gotd: 'gotd', gotd_clear: 'gotd', links: 'links', premium: 'premium', premium_revoke: 'premium',
     giveaway: 'giveaway', giveaway_draw: 'giveaway', giveaway_cancel: 'giveaway', premium_switch: 'premium',
     tag_create: 'tags', tag_delete: 'tags', tag_assign: 'tags', tag_perms: 'tagperms',
-    role: 'tagperms', mute: 'mute', stealth: 'mute', say: 'say', clear: 'clear', slow: 'slow', lock: 'slow', banner: 'banner',
+    role: 'tagperms', mute: 'mute', stealth: 'mute', warn: 'mute', kick: 'mute', unmute: 'mute', report_close: 'mute', purge: 'clear', banname: 'clear', unbanall: 'tagperms', say: 'say', clear: 'clear', slow: 'slow', lock: 'slow', banner: 'banner',
   }[act];
   if (!need) return res.status(400).json({ error: 'unknown action' });
   if (!can(pid, need)) return res.status(403).json({ error: 'you do not have the "' + need + '" permission' });
@@ -719,7 +788,50 @@ router.post('/staff', json, (req, res) => {
       const t = target(b);
       if (!t) return res.status(404).json({ error: 'nobody by that name' });
       if (t !== pid && C.rankOf(t) >= mine) return res.status(403).json({ error: 'your rank cannot do that' });
-      stealthFor.set(t, now() + 10 * 60e3);
+      order(t, { stealth: true });
+      return ok({ name: C.nameOf(t) });
+    }
+    /* Better moderation (2026-11-12), all by chat name. */
+    case 'warn': {
+      const t = target(b);
+      if (!t) return res.status(404).json({ error: 'nobody by that name' });
+      if (C.rankOf(t) >= mine) return res.status(403).json({ error: 'your rank cannot do that' });
+      order(t, { warn: { text: str(b.text, 300) || 'Please follow the rules.', by: me } });
+      return ok({ name: C.nameOf(t) });
+    }
+    case 'kick': {
+      const t = target(b);
+      if (!t) return res.status(404).json({ error: 'nobody by that name' });
+      if (C.rankOf(t) >= mine) return res.status(403).json({ error: 'your rank cannot do that' });
+      order(t, { kick: true });
+      return ok({ name: C.nameOf(t) });
+    }
+    case 'unmute': {
+      const t = target(b);
+      if (!t) return res.status(404).json({ error: 'nobody by that name' });
+      C.mute(t, 0);
+      return ok({ name: C.nameOf(t) });
+    }
+    case 'purge': {
+      const t = target(b);
+      if (!t) return res.status(404).json({ error: 'nobody by that name' });
+      if (C.rankOf(t) >= mine) return res.status(403).json({ error: 'your rank cannot do that' });
+      return ok({ name: C.nameOf(t), removed: C.purgePid(t) });
+    }
+    case 'banname': {
+      const t = target(b);
+      if (!t) return res.status(404).json({ error: 'nobody by that name' });
+      if (mine < 2) return res.status(403).json({ error: 'only super admins and up can ban' });
+      if (C.rankOf(t) >= mine) return res.status(403).json({ error: 'your rank cannot do that' });
+      const r = C.banPid(t);
+      if (!r) return res.status(409).json({ error: 'they have no messages to tell their device from - ban them from one of their messages instead' });
+      return ok(Object.assign({ name: C.nameOf(t) }, r));
+    }
+    case 'unbanall': return ok({ unbanned: C.unbanAll() });
+    case 'report_close': {
+      const r = S.reports.find((x) => x.id === parseInt(b.id, 10));
+      if (!r) return res.status(404).json({ error: 'no such report' });
+      r.open = false; r.doneBy = me; r.doneAt = now(); r.result = str(b.result, 40) || 'closed';
       return ok();
     }
     case 'mute': {
