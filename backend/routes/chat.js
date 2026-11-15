@@ -163,7 +163,10 @@ function gap(map, key, ms) {
   }
   return false;
 }
-const ipOf = (req) => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+/* Same address the bans use: Cloudflare's CF-Connecting-IP first. The first
+   X-Forwarded-For entry is whatever the sender wrote, so it could be faked on
+   every request to dodge the per-address limits (fixed 2026-11-15). */
+const ipOf = (req) => clientIp(req);
 
 const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
 const fpOf = (token) => (token ? createHash('sha256').update(String(token)).digest('hex').slice(0, 24) : '');
@@ -193,6 +196,28 @@ function seen(pid, name, color) {
   people.set(pid, p);
 }
 const cleanName = (v) => String(v || '').trim().slice(0, 24);
+
+/* Built-in slur block (2026-11-15). The admin word list was empty, so slurs
+   went through in names and messages. These are always on: a name with one is
+   refused, and in messages they are starred out. Look-alike spellings
+   (n1gg3r, f@g) are folded before matching. */
+const SLURS = ['nigger', 'nigga', 'nigg', 'faggot', 'fagot', 'fag', 'retard', 'tranny', 'chink', 'spic', 'kike', 'wetback', 'coon', 'beaner', 'gook', 'raghead', 'towelhead', 'dyke'];
+const FOLD = { 0: 'o', 1: 'i', 3: 'e', 4: 'a', 5: 's', 7: 't', 8: 'b', '@': 'a', '$': 's', '!': 'i', '|': 'i' };
+const fold = (s) => String(s).toLowerCase().replace(/[013457@$!|8]/g, (c) => FOLD[c] || c);
+/* Short words (coon, spic, fag...) only as whole words, so "raccoon" or
+   "spicy" still pass; long ones match anywhere, separators ignored. */
+function hasSlur(s) {
+  const f = fold(s);
+  const squashed = f.replace(/[^a-z]/g, '');
+  for (const w of SLURS) {
+    if (w.length >= 6 || w === 'nigg' || w === 'nigga') { if (squashed.includes(w)) return true; }
+    else if (new RegExp('(^|[^a-z])' + w + 's?($|[^a-z])').test(f)) return true;
+  }
+  return false;
+}
+function starSlurs(text) {
+  return String(text).replace(/\S+/g, (word) => (hasSlur(word) ? '*'.repeat(word.length) : word));
+}
 const clampInt = (v, lo, hi) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= lo && n <= hi ? n : 0; };
 
 function cleanText(v) {
@@ -444,11 +469,53 @@ function burst(key, max, gapMs) {
   return over;
 }
 
+/* Flood guard (2026-11-15, after a raid of ~500 lorem-ipsum messages from one
+   address through 38 throwaway profiles in 6 minutes). The 5-second burst
+   caps above didn't catch it: the per-device cap resets with every new
+   profile, and 25 per 5 s per address is 5 a second. On top of them:
+   - 45 messages a minute per address (a whole school can share one);
+   - at most 12 different profiles posting from one address in 10 minutes;
+   - an address that keeps hitting these limits is timed out for an hour
+     (in memory only, so a restart or the hour clears it; no permanent ban). */
+const windows = new Map();
+function overWindow(key, max, ms) {
+  const now = Date.now();
+  const list = (windows.get(key) || []).filter((t) => now - t < ms);
+  const over = list.length >= max;
+  if (!over) list.push(now);
+  windows.set(key, list);
+  if (windows.size > 20000) { for (const [k, l] of windows) { if (!l.length || now - l[l.length - 1] > 600000) windows.delete(k); } }
+  return over;
+}
+const idents = new Map();   /* ip -> Map(identity -> last seen) */
+const timeouts = new Map(); /* ip -> until */
+function floodBlocked(ip, ident) {
+  const now = Date.now();
+  if ((timeouts.get(ip) || 0) > now) return 'too many messages from your network - try again later';
+  const seen = idents.get(ip) || new Map();
+  for (const [k, t] of seen) if (now - t > 600000) seen.delete(k);
+  if (!seen.has(ident) && seen.size >= 12) return strike(ip) || 'too many new profiles from your network - try again in a few minutes';
+  if (overWindow('min:' + ip, 45, 60000)) return strike(ip) || 'slow down a moment';
+  seen.set(ident, now); idents.set(ip, seen);
+  if (idents.size > 20000) idents.clear();
+  return null;
+}
+function strike(ip) {
+  if (overWindow('strike:' + ip, 20, 300000)) {
+    timeouts.set(ip, Date.now() + 3600000);
+    console.log('[chat] flood: timed out an address for 1 hour');
+    return 'too many messages from your network - try again later';
+  }
+  return null;
+}
+
 router.post('/send', express.json({ limit: '32kb' }), (req, res) => {
   const body = req.body || {};
   if (burst('ip:' + ipOf(req), 25, 0) || burst('fp:' + (fpOf(body.token) || ipOf(req)), 5, MIN_GAP_MS)) {
     return res.status(429).json({ error: 'slow down a moment' });
   }
+  const flood = floodBlocked(ipOf(req), fpOf(body.token) || 'anon');
+  if (flood) return res.status(429).json({ error: flood });
   const room = roomOf(req, res, body);
   if (!room) return;
   const name = cleanName(body.name);
@@ -456,7 +523,9 @@ router.post('/send', express.json({ limit: '32kb' }), (req, res) => {
   const att = cleanAtt(body.att);
   const poll = cleanPoll(body.poll);
   if (!name) return res.status(400).json({ error: 'no name set' });
+  if (hasSlur(name)) return res.status(400).json({ error: 'that name is not allowed - change it in your profile' });
   if (!text && !att.length && !poll) return res.status(400).json({ error: 'empty message' });
+  if (text) text = starSlurs(text);
 
   const g = gate(req, res, name);
   if (!g) return;
