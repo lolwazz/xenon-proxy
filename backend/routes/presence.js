@@ -15,6 +15,8 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync } from '
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clipsBy } from './clips.js';
+import { settings, clientIp, ipHash } from '../site-settings.js';
+import { hasSlur } from '../slurs.js';
 
 const DATA = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'data');
 const AVATARS = join(DATA, 'avatars');
@@ -47,7 +49,8 @@ export const uidOf = (id) => createHash('sha256').update('xn-uid:' + id).digest(
 
 try {
   if (existsSync(STORE)) {
-    for (const [id, p] of Object.entries(JSON.parse(readFileSync(STORE, 'utf8')))) people.set(id, p);
+    /* slur-named profiles from raids are dropped on load (2026-11-15) */
+    for (const [id, p] of Object.entries(JSON.parse(readFileSync(STORE, 'utf8')))) if (!hasSlur(String(p.name || ''))) people.set(id, p);
   }
 } catch (err) {
   console.warn('profiles.json unreadable, starting empty: ' + err.message);
@@ -102,11 +105,35 @@ function card(p, now) {
   };
 }
 
+/* Raid guard (2026-11-15): blocked from the chat, the second raid spammed
+   the online list with hundreds of slur-named profiles. Now: no slur names,
+   no banned addresses, at most 6 new profiles per address per 10 minutes,
+   and if more than 40 new profiles appear in a minute, no new profiles are
+   taken for 15 minutes (people already known keep working). */
+const newByIp = new Map();
+const newHits = [];
+let newRaidUntil = 0;
+function newProfileBlocked(ip) {
+  const now = Date.now();
+  if (newRaidUntil > now) return true;
+  const l = (newByIp.get(ip) || []).filter((t) => now - t < 600000);
+  if (l.length >= 6) { newByIp.set(ip, l); return true; }
+  while (newHits.length && now - newHits[0] > 60000) newHits.shift();
+  newHits.push(now);
+  if (newHits.length > 40) { newRaidUntil = now + 15 * 60000; newHits.length = 0; console.log('[presence] raid mode: no new profiles for 15 minutes'); return true; }
+  l.push(now); newByIp.set(ip, l);
+  if (newByIp.size > 20000) newByIp.clear();
+  return false;
+}
 router.post('/ping', express.json({ limit: '4mb' }), (req, res) => {
   const b = req.body || {};
   const id = clean(b.id, 64);
   if (!id) return res.status(400).json({ ok: false });
+  const ip = clientIp(req);
+  if (settings().bannedDevices.includes(ipHash(ip))) return res.status(403).json({ ok: false });
+  if (b.name && hasSlur(String(b.name))) return res.status(403).json({ ok: false, error: 'that name is not allowed' });
   const now = Date.now();
+  if (!people.has(id) && newProfileBlocked(ip)) return res.status(429).json({ ok: false, error: 'too many new profiles right now' });
   const prev = people.get(id) || {};
   let pfp = prev.pfp || '';
   if (typeof b.pfp === 'string' && b.pfp.startsWith('data:')) pfp = saveAvatar(b.pfp) || pfp;
