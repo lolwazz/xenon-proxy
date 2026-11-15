@@ -18,6 +18,7 @@ import chatRouter, { commentsFeed, MEDIA_DIR as CHAT_MEDIA } from './backend/rou
 import aiRouter from './backend/routes/ai.js';
 import storeRouter from './backend/routes/store.js';
 import xenonRouter from './backend/routes/xenon.js';
+import discordBridge from './backend/routes/discord-bridge.js';
 import xeunesRouter from './backend/routes/xeunes.js';
 import suggestRouter from './backend/routes/suggest.js';
 import bookmarkletsRouter from './backend/routes/bookmarklets.js';
@@ -360,6 +361,8 @@ app.use('/cursors', (req, res, next) => {
 app.use('/api/chat', chatRouter);
 /* Notifications, Live TV, events, premium, tags, leaderboard (routes/xenon.js). */
 app.use('/api/x', xenonRouter);
+/* Discord #general bridge for the site (no discord.com in the browser). */
+app.use('/api/dc', discordBridge);
 /* Xeunes, the portal's music app: song matching, audio and the TIDAL relay
    (routes/xeunes.js). */
 app.use('/api/xe', xeunesRouter);
