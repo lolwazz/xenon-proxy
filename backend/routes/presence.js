@@ -165,6 +165,13 @@ router.get('/u/:uid', (req, res) => {
 
 export function profileByDevice(id) { return people.get(id) || null; }
 /* Picture and border for a chat name, newest profile first (leaderboard). */
+/* Profile name for a device id (sp-device-id), for the leaderboard: most
+   people fill in the Create Profile popup but never chat, so they have no
+   chat name (2026-11-15). */
+export function nameById(id) {
+  const p = people.get(String(id || '').slice(0, 64));
+  return p && p.name && p.name !== 'anon' ? String(p.name).slice(0, 24) : '';
+}
 export function pfpByName(name) {
   const n = String(name || '').toLowerCase();
   if (!n) return null;

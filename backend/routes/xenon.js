@@ -313,7 +313,8 @@ router.get('/live', (req, res) => {
 
 /* ------------------------------------------------------------ playtime */
 const beats = new Map();
-router.post('/play', json, (req, res) => {
+router.post('/play', json, async (req, res) => {
+  if (presenceMod === null) presenceMod = await import('./presence.js').catch(() => false);
   const b = req.body || {};
   const pid = who(req, b);
   const f = str(b.f, 160);
@@ -330,11 +331,20 @@ router.post('/play', json, (req, res) => {
     const keep = Object.entries(p.g).sort((x, y) => y[1] - x[1]).slice(0, 300);
     p.g = Object.fromEntries(keep);
   }
-  p.n = C.nameOf(pid) || p.n || '';
+  /* Chat name first; otherwise the Create Profile name for this device
+     (2026-11-15 - most players never chat, so they never showed up). */
+  const prof = presenceMod && presenceMod.nameById ? presenceMod.nameById(b.id) : '';
+  const nm = C.nameOf(pid) || prof || p.n || '';
+  p.n = nm && !hasSlurName(nm) ? nm : '';
   p.last = now();
   save();
   res.json({ ok: true, progress: progress(pid) });
 });
+/* Same idea as chat's slur block, for names shown on the leaderboard. */
+function hasSlurName(s) {
+  const f = String(s).toLowerCase().replace(/[013457@$!|8]/g, (c) => ({ 0: 'o', 1: 'i', 3: 'e', 4: 'a', 5: 's', 7: 't', 8: 'b', '@': 'a', $: 's', '!': 'i', '|': 'i' })[c] || c).replace(/[^a-z]/g, '');
+  return /nigg|faggot|retard|tranny|kike|wetback|towelhead|raghead/.test(f);
+}
 
 /* ------------------------------------------------------------ referrals + premium */
 router.post('/ref', json, (req, res) => {
@@ -912,8 +922,10 @@ router.post('/staff', json, (req, res) => {
       const t = target(b);
       if (!t) return res.status(404).json({ error: 'nobody by that name' });
       if (C.rankOf(t) >= mine) return res.status(403).json({ error: 'your rank cannot do that' });
-      order(t, { warn: { text: str(b.text, 300) || 'Please follow the rules.', by: me } });
-      return ok({ name: C.nameOf(t) });
+      /* anon (2026-11-15): the warned person sees no name. The staff audit log
+         still records who sent it. */
+      order(t, { warn: { text: str(b.text, 300) || 'Please follow the rules.', by: b.anon ? '' : me } });
+      return ok({ name: C.nameOf(t), anon: !!b.anon });
     }
     case 'kick': {
       const t = target(b);
