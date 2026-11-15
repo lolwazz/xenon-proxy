@@ -1,72 +1,121 @@
 /* Discord chat bridge (2026-11-15): lets people on the Xenon site read and
- * post in the Discord server's #general without touching discord.com,
- * which school Chromebooks block. Everything goes through this proxy.
+ * post in the Discord server without touching discord.com, which school
+ * Chromebooks block. Everything goes through this proxy.
  *
- *   GET  /api/dc/messages        latest #general messages (read with the
- *                                Xenon Bot; needs its Message Content Intent)
- *   POST /api/dc/send            {token, id, name, text} -> posted through a
- *                                webhook as "<name> (Xenon)" with their avatar
+ *   GET  /api/dc/channels        categories + channels everyone can see
+ *                                (staff/hidden ones are left out)
+ *   GET  /api/dc/messages?ch=    latest messages in one channel (read with
+ *                                the Xenon Bot; needs Message Content Intent)
+ *   POST /api/dc/send            {ch, token, id, name, text} -> posted
+ *                                through that channel's webhook as
+ *                                "<name> (Xenon)" with their avatar
  *   GET  /api/dc/img?u=          Discord avatars/attachments, fetched here
  *                                (cdn.discordapp.com is blocked at schools)
  *
  * Secrets: the bot token is read from ../xenon-bot/.env (DISCORD_TOKEN), the
- * webhook from backend/data/discord-bridge.json - both git-ignored. Neither
- * is ever sent to the browser. Guests are rate limited per address, slurs
- * and @everyone/@here are blocked, and site bans apply here too.
+ * webhooks live in backend/data/discord-bridge.json - both git-ignored and
+ * never sent to the browser. A webhook is created the first time someone
+ * posts in a channel. Channels members can't type in (@everyone denied Send
+ * Messages, announcement channels) are read-only here too. Guests are rate
+ * limited per address, slurs and @everyone/@here are blocked, and site bans
+ * apply.
  */
 import express from 'express';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { settings, clientIp, ipHash } from '../site-settings.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
+const DATA = join(ROOT, 'backend', 'data', 'discord-bridge.json');
+const GUILD = '1571401078631571507';
 const router = express.Router();
 
-function cfg() {
-  try {
-    const b = JSON.parse(readFileSync(join(ROOT, 'backend', 'data', 'discord-bridge.json'), 'utf8'));
-    const envFile = process.env.DISCORD_BOT_ENV || join(ROOT, '..', 'xenon-bot', '.env');
-    const m = existsSync(envFile) ? readFileSync(envFile, 'utf8').match(/^\s*DISCORD_TOKEN\s*=\s*"?([^"\r\n]+)"?\s*$/m) : null;
-    return { ...b, botToken: process.env.DISCORD_TOKEN || (m ? m[1].trim() : '') };
-  } catch { return null; }
+function saved() { try { return JSON.parse(readFileSync(DATA, 'utf8')); } catch { return {}; } }
+function botToken() {
+  if (process.env.DISCORD_TOKEN) return process.env.DISCORD_TOKEN;
+  const envFile = process.env.DISCORD_BOT_ENV || join(ROOT, '..', 'xenon-bot', '.env');
+  const m = existsSync(envFile) ? readFileSync(envFile, 'utf8').match(/^\s*DISCORD_TOKEN\s*=\s*"?([^"\r\n]+)"?\s*$/m) : null;
+  return m ? m[1].trim() : '';
+}
+async function dapi(method, route, body) {
+  const t = botToken();
+  if (!t) throw new Error('bridge not set up');
+  const r = await fetch('https://discord.com/api/v10' + route, {
+    method, headers: { Authorization: 'Bot ' + t, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error('discord ' + r.status);
+  return r.status === 204 ? null : r.json();
 }
 
-/* ---------------------------------------------------------- reading */
-let cache = { at: 0, list: [], error: '' };
-let lastWanted = 0;
-let busy = false;
-async function refresh() {
-  const c = cfg();
-  if (!c || !c.botToken) { cache = { at: Date.now(), list: [], error: 'bridge not set up' }; return; }
-  busy = true;
-  try {
-    const r = await fetch('https://discord.com/api/v10/channels/' + c.channel + '/messages?limit=50', { headers: { Authorization: 'Bot ' + c.botToken } });
-    if (!r.ok) throw new Error('discord ' + r.status);
-    const raw = await r.json();
-    cache = { at: Date.now(), list: raw.reverse().filter((m) => m.type === 0 || m.type === 19).map(shape), error: '' };
-  } catch (e) {
-    cache = { at: Date.now(), list: cache.list, error: String(e.message || e).slice(0, 80) };
-  } finally { busy = false; }
+/* ---------------------------------------------------------- channels */
+const VIEW = 1n << 10n, SEND = 1n << 11n;
+let chCache = { at: 0, cats: [], byId: new Map() };
+function denied(ch, bit) {
+  const o = (ch.permission_overwrites || []).find((x) => x.id === GUILD);
+  return o ? (BigInt(o.deny) & bit) !== 0n : false;
 }
+async function channels() {
+  if (Date.now() - chCache.at < 60000 && chCache.cats.length) return chCache;
+  const all = await dapi('GET', '/guilds/' + GUILD + '/channels');
+  const cats = all.filter((c) => c.type === 4).sort((a, b) => a.position - b.position);
+  const catById = new Map(cats.map((c) => [c.id, c]));
+  const usable = all.filter((c) => (c.type === 0 || c.type === 5)).filter((c) => {
+    const cat = c.parent_id ? catById.get(c.parent_id) : null;
+    return !denied(c, VIEW) && !(cat && denied(cat, VIEW) && !(c.permission_overwrites || []).some((o) => o.id === GUILD && (BigInt(o.allow) & VIEW)));
+  }).sort((a, b) => a.position - b.position);
+  const byId = new Map();
+  const shapeCh = (c) => {
+    const cat = c.parent_id ? catById.get(c.parent_id) : null;
+    const ro = c.type === 5 || denied(c, SEND) || (cat && denied(cat, SEND) && !(c.permission_overwrites || []).some((o) => o.id === GUILD));
+    const x = { id: c.id, name: c.name, topic: String(c.topic || '').slice(0, 200), ro: Boolean(ro), news: c.type === 5 };
+    byId.set(c.id, x);
+    return x;
+  };
+  const out = [];
+  const loose = usable.filter((c) => !c.parent_id).map(shapeCh);
+  if (loose.length) out.push({ id: '', name: '', channels: loose });
+  for (const cat of cats) {
+    const list = usable.filter((c) => c.parent_id === cat.id).map(shapeCh);
+    if (list.length) out.push({ id: cat.id, name: cat.name, channels: list });
+  }
+  chCache = { at: Date.now(), cats: out, byId };
+  return chCache;
+}
+router.get('/channels', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const c = await channels();
+    const def = saved().channel || '';
+    res.json({ server: 'Xenon.', def: c.byId.has(def) ? def : (c.cats[0] && c.cats[0].channels[0] ? c.cats[0].channels[0].id : ''), cats: c.cats });
+  } catch (e) { res.status(502).json({ error: String(e.message || e).slice(0, 80) }); }
+});
+
+/* ---------------------------------------------------------- reading */
+const caches = new Map(); /* channel id -> { at, list, error, busy } */
 function img(u) { return u ? '/api/dc/img?u=' + encodeURIComponent(u) : ''; }
-function shape(m) {
-  const names = Object.fromEntries((m.mentions || []).map((u) => [u.id, u.global_name || u.username]));
+function shape(m, names) {
+  const men = Object.fromEntries((m.mentions || []).map((u) => [u.id, u.global_name || u.username]));
   let text = String(m.content || '')
-    .replace(/<@!?(\d+)>/g, (s, id) => '@' + (names[id] || 'user'))
-    .replace(/<#(\d+)>/g, '#channel')
+    .replace(/<@!?(\d+)>/g, (s, id) => '@' + (men[id] || 'user'))
+    .replace(/<#(\d+)>/g, (s, id) => '#' + (names.get(id) || 'channel'))
     .replace(/<@&(\d+)>/g, '@role')
     .replace(/<a?:(\w+):\d+>/g, ':$1:');
+  for (const e of (m.embeds || []).slice(0, 2)) {
+    const bits = [e.title, e.description].filter(Boolean).join('\n');
+    if (bits) text += (text ? '\n' : '') + bits;
+  }
   const a = m.author || {};
   const web = Boolean(m.webhook_id);
   const avatar = a.avatar ? 'https://cdn.discordapp.com/avatars/' + a.id + '/' + a.avatar + '.png?size=64' : '';
   return {
     id: m.id,
-    name: web ? a.username : (m.member && m.member.nick) || a.global_name || a.username || 'user',
-    site: web,
-    bot: Boolean(a.bot) && !web,
-    av: web ? (a.avatar ? img(avatar) : '') : img(avatar),
+    name: web ? a.username : a.global_name || a.username || 'user',
+    site: web && / \(Xenon\)$/.test(a.username || ''),
+    bot: Boolean(a.bot) && !(web && / \(Xenon\)$/.test(a.username || '')),
+    av: avatar ? img(avatar) : '',
     text: text.slice(0, 2000),
     imgs: (m.attachments || []).filter((x) => /^image\//.test(x.content_type || '')).slice(0, 4).map((x) => img(x.proxy_url || x.url)),
     ts: Date.parse(m.timestamp) || 0,
@@ -74,9 +123,24 @@ function shape(m) {
 }
 router.get('/messages', async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  lastWanted = Date.now();
-  if (Date.now() - cache.at > 3500 && !busy) await refresh();
-  res.json({ messages: cache.list, error: cache.error || undefined });
+  let c;
+  try { c = await channels(); } catch (e) { return res.status(502).json({ error: String(e.message || e).slice(0, 80) }); }
+  const id = String(req.query.ch || saved().channel || '');
+  if (!c.byId.has(id)) return res.status(404).json({ error: 'no such channel' });
+  const k = caches.get(id) || { at: 0, list: [], error: '' };
+  if (Date.now() - k.at > 3500 && !k.busy) {
+    k.busy = true;
+    try {
+      const raw = await dapi('GET', '/channels/' + id + '/messages?limit=50');
+      const names = new Map([...c.byId.values()].map((x) => [x.id, x.name]));
+      k.list = raw.reverse().filter((m) => m.type === 0 || m.type === 19 || m.type === 20).map((m) => shape(m, names));
+      k.error = '';
+    } catch (e) { k.error = String(e.message || e).slice(0, 80); }
+    k.at = Date.now(); k.busy = false;
+    caches.set(id, k);
+    if (caches.size > 100) caches.clear();
+  }
+  res.json({ messages: k.list, error: k.error || undefined, ro: c.byId.get(id).ro });
 });
 
 /* ---------------------------------------------------------- images */
@@ -108,6 +172,19 @@ function limited(key, max, ms) {
   if (hits.size > 20000) hits.clear();
   return false;
 }
+/* One webhook per channel, made on first use and remembered. */
+async function hookFor(ch) {
+  const b = saved();
+  b.hooks = b.hooks || {};
+  if (b.channel === ch && b.webhookId && !b.hooks[ch]) b.hooks[ch] = { id: b.webhookId, token: b.webhookToken };
+  if (b.hooks[ch]) return b.hooks[ch];
+  const list = await dapi('GET', '/channels/' + ch + '/webhooks');
+  let h = list.find((w) => w.name === 'Xenon Site Chat' && w.token);
+  if (!h) h = await dapi('POST', '/channels/' + ch + '/webhooks', { name: 'Xenon Site Chat' });
+  b.hooks[ch] = { id: h.id, token: h.token };
+  writeFileSync(DATA, JSON.stringify(b, null, 1));
+  return b.hooks[ch];
+}
 let presenceMod = null;
 router.post('/send', express.json({ limit: '8kb' }), async (req, res) => {
   const b = req.body || {};
@@ -116,29 +193,34 @@ router.post('/send', express.json({ limit: '8kb' }), async (req, res) => {
   const S = settings();
   if (S.chatLocked) return res.status(403).json({ error: 'chat is locked right now' });
   if (S.bannedDevices.includes(ipHash(ip))) return res.status(403).json({ error: 'you cannot post here' });
+  let c;
+  try { c = await channels(); } catch { return res.status(502).json({ error: 'could not reach Discord' }); }
+  const ch = String(b.ch || saved().channel || '');
+  const info = c.byId.get(ch);
+  if (!info) return res.status(404).json({ error: 'no such channel' });
+  if (info.ro) return res.status(403).json({ error: 'You do not have permission to send messages in this channel.' });
   if (presenceMod === null) presenceMod = await import('./presence.js').catch(() => false);
   const prof = presenceMod && presenceMod.nameById ? presenceMod.nameById(b.id) : '';
-  let name = String(prof || b.name || '').replace(/[\u0000-\u001f<>@#:`]/g, '').replace(/discord|clyde|everyone|here/gi, '').trim().slice(0, 24);
-  if (!name) return res.status(400).json({ error: 'make a Xenon profile first (Settings > Profile)' });
+  const name = String(prof || b.name || '').replace(/[\u0000-\u001f<>@#:`]/g, '').replace(/discord|clyde|everyone|here/gi, '').trim().slice(0, 24);
+  if (!name) return res.status(400).json({ error: 'make a Xenon profile first' });
   if (hasSlur(name) || (S.bannedNames || []).includes(name.toLowerCase())) return res.status(403).json({ error: 'that name is not allowed' });
   let text = String(b.text || '').replace(/\r/g, '').trim().slice(0, 500);
   if (!text) return res.status(400).json({ error: 'empty message' });
   if (hasSlur(text)) return res.status(400).json({ error: 'that message has a word that is not allowed' });
   text = text.replace(/@(everyone|here)/gi, '@​$1');
-  const c = cfg();
-  if (!c || !c.webhookId) return res.status(503).json({ error: 'Discord chat is not set up' });
   let avatar;
   try {
     const p = presenceMod && presenceMod.pfpByName ? presenceMod.pfpByName(prof || name) : null;
     if (p && p.pfp && /^\/avatars\/[\w.-]+$/.test(p.pfp)) avatar = 'https://app.zpack.beauty' + p.pfp;
   } catch {}
   try {
-    const r = await fetch('https://discord.com/api/webhooks/' + c.webhookId + '/' + c.webhookToken + '?wait=true', {
+    const h = await hookFor(ch);
+    const r = await fetch('https://discord.com/api/webhooks/' + h.id + '/' + h.token + '?wait=true', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: text, username: name + ' (Xenon)', avatar_url: avatar, allowed_mentions: { parse: [] } }),
     });
     if (!r.ok) return res.status(502).json({ error: 'Discord said ' + r.status });
-    cache.at = 0;
+    const k = caches.get(ch); if (k) k.at = 0;
     res.json({ ok: true });
   } catch { res.status(502).json({ error: 'could not reach Discord' }); }
 });
