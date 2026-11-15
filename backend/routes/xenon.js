@@ -61,6 +61,16 @@ const S = {
   songs: {},
   reports: [],                // {id, at, by, byName, pid, name, msg, text, reason, open}
   nextReport: 1,
+  /* Donors (2026-11-14). Payments can't be checked automatically (Cash App
+     has no API, the card link is the owner's own account), so a donor fills
+     in /thanks/ and staff with "tagperms" approve it after seeing the money
+     arrive. Approved amounts add up and show as a badge next to the name. */
+  donors: {},                 // pid -> {amount (whole dollars), at, name}
+  donorClaims: [],            // {id, at, pid, name, amount, method, payer, note, open, result}
+  nextClaim: 1,
+  /* Ban requests (2026-11-14): only the owner bans; other staff ask. */
+  banRequests: [],            // {id, at, by, byName, pid, name, dev, text, reason, open, result}
+  nextBanReq: 1,
 };
 try { Object.assign(S, JSON.parse(readFileSync(FILE, 'utf8'))); } catch {}
 let saveT = null;
@@ -143,11 +153,22 @@ function isPremium(pid) {
 const FONTS = ['', 'pusab', 'fredoka', 'comic', 'mono', 'serif', 'pixel', 'marker', 'gothic'];
 const FX = ['', 'glow', 'rainbow', 'pulse', 'shimmer', 'fire', 'ice', 'glitch', 'arcady'];
 /* What a chat line shows next to the author's name. */
+function banRequest(o) {
+  if (S.banRequests.some((x) => x.open && ((o.pid && x.pid === o.pid) || (o.dev && x.dev === o.dev)))) return { error: 'a ban for them is already waiting for the owner' };
+  S.banRequests.push({ id: S.nextBanReq++, at: now(), by: o.by, byName: C.nameOf(o.by), pid: o.pid || '', name: o.name || C.nameOf(o.pid), dev: o.dev || '', text: o.text || '', reason: o.reason || '', open: true });
+  if (S.banRequests.length > 300) S.banRequests.splice(0, S.banRequests.length - 300);
+  audit(o.by, 'ban_request', { name: o.name || C.nameOf(o.pid), text: o.reason || '' });
+  save();
+  return { ok: true };
+}
+C.setBanRequestHook(banRequest);
 C.setTagHook((pid) => {
   const t = S.tags[S.tagOf[pid]];
   const prem = S.premiumOn && isPremium(pid);
-  if (t) return { label: t.label, color: t.color, color2: t.color2 || '', font: t.font || '', fx: t.fx || '', icon: t.icon || '', prem };
-  if (prem) return { label: 'PREMIUM', color: '#f5c542', color2: '#ff8a3d', fx: 'shimmer', icon: '✦', prem: true };
+  const don = (S.donors[pid] || {}).amount || 0;
+  if (t) return { label: t.label, color: t.color, color2: t.color2 || '', font: t.font || '', fx: t.fx || '', icon: t.icon || '', prem, don };
+  if (prem) return { label: 'PREMIUM', color: '#f5c542', color2: '#ff8a3d', fx: 'shimmer', icon: '✦', prem: true, don };
+  if (don) return { don };
   return null;
 });
 
@@ -623,6 +644,35 @@ router.post('/swdiag', express.json({ limit: '24kb' }), (req, res) => {
 });
 
 /* ------------------------------------------------------------ staff */
+/* ------------------------------------------------------------ donors */
+const METHODS = ['card', 'cashapp', 'other'];
+router.get('/donor/me', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const pid = who(req);
+  if (!pid) return res.json({ donor: 0, claim: null });
+  const d = S.donors[pid];
+  const c = [...S.donorClaims].reverse().find((x) => x.pid === pid);
+  res.json({ donor: d ? d.amount : 0, claim: c ? { open: c.open, result: c.result || '', amount: c.amount, at: c.at } : null });
+});
+router.post('/donor/claim', json, (req, res) => {
+  const b = req.body || {};
+  const pid = who(req, b);
+  if (!pid) return res.status(403).json({ error: 'open Chat once first so you have a chat name' });
+  const name = C.nameOf(pid);
+  if (!name || name === 'someone') return res.status(400).json({ error: 'set a chat name first (Chat or Settings), so your badge has somewhere to go' });
+  if (burst('donor:' + pid, 1, 60e3)) return res.status(429).json({ error: 'wait a minute before sending another' });
+  if (S.donorClaims.some((x) => x.pid === pid && x.open)) return res.status(409).json({ error: 'you already sent one - staff will check it soon' });
+  const amount = Math.round(Number(b.amount));
+  if (!Number.isFinite(amount) || amount < 1 || amount > 10000) return res.status(400).json({ error: 'how much did you send? (whole dollars)' });
+  const method = METHODS.includes(b.method) ? b.method : 'other';
+  const payer = str(b.payer, 60);
+  if (!payer) return res.status(400).json({ error: 'say what name or $cashtag the payment came from, so staff can find it' });
+  S.donorClaims.push({ id: S.nextClaim++, at: now(), pid, name, amount, method, payer, note: str(b.note, 200), open: true });
+  if (S.donorClaims.length > 500) S.donorClaims.splice(0, S.donorClaims.length - 500);
+  save();
+  res.json({ ok: true });
+});
+
 router.get('/staff/info', (req, res) => {
   res.set('Cache-Control', 'no-store');
   const pid = who(req);
@@ -639,6 +689,9 @@ router.get('/staff/info', (req, res) => {
     people, tags: S.tags, wall: S.wall, links: S.links, tv: S.tv, event: S.event, gotd: gameOfDay(),
     giveaway: S.giveaway, premiumOn: S.premiumOn, notes: S.notes.slice(-20).reverse(),
     reports: perms.includes('mute') ? S.reports.filter((r) => r.open).slice(-100).reverse() : [],
+    donorClaims: C.rankOf(pid) >= 4 ? S.donorClaims.filter((c) => c.open).slice(-100).reverse() : null,
+    banRequests: C.rankOf(pid) >= 4 ? S.banRequests.filter((x) => x.open).slice(-100).reverse() : null,
+    donors: C.rankOf(pid) >= 4 ? Object.entries(S.donors).map(([p, d]) => ({ pid: p, name: C.nameOf(p) || d.name, amount: d.amount, at: d.at })).sort((a, b) => b.amount - a.amount) : null,
     log: perms.includes('tagperms') ? LOG.slice(-300).reverse() : null, settings: { slowSec: settings().slowSec, chatLocked: settings().chatLocked, announce: settings().announce },
   });
 });
@@ -657,7 +710,7 @@ router.post('/staff', json, (req, res) => {
     gotd: 'gotd', gotd_clear: 'gotd', links: 'links', premium: 'premium', premium_revoke: 'premium',
     giveaway: 'giveaway', giveaway_draw: 'giveaway', giveaway_cancel: 'giveaway', premium_switch: 'premium',
     tag_create: 'tags', tag_delete: 'tags', tag_assign: 'tags', tag_perms: 'tagperms',
-    role: 'tagperms', mute: 'mute', stealth: 'mute', warn: 'mute', kick: 'mute', unmute: 'mute', report_close: 'mute', purge: 'clear', banname: 'clear', unbanall: 'tagperms', say: 'say', clear: 'clear', slow: 'slow', lock: 'slow', banner: 'banner',
+    role: 'tagperms', mute: 'mute', stealth: 'mute', warn: 'mute', kick: 'mute', unmute: 'mute', report_close: 'mute', donor_approve: 'tagperms', donor_reject: 'tagperms', donor_set: 'tagperms', ban_approve: 'tagperms', ban_deny: 'tagperms', purge: 'clear', banname: 'clear', unbanall: 'tagperms', say: 'say', clear: 'clear', slow: 'slow', lock: 'slow', banner: 'banner',
   }[act];
   if (!need) return res.status(400).json({ error: 'unknown action' });
   if (!can(pid, need)) return res.status(403).json({ error: 'you do not have the "' + need + '" permission' });
@@ -838,11 +891,52 @@ router.post('/staff', json, (req, res) => {
       if (!t) return res.status(404).json({ error: 'nobody by that name' });
       if (mine < 2) return res.status(403).json({ error: 'only super admins and up can ban' });
       if (C.rankOf(t) >= mine) return res.status(403).json({ error: 'your rank cannot do that' });
+      if (mine < 4) {
+        const q = banRequest({ by: pid, pid: t, name: C.nameOf(t), reason: str(b.reason, 120) });
+        if (q.error) return res.status(409).json({ error: q.error });
+        return res.json({ ok: true, pending: true, name: C.nameOf(t) });
+      }
       const r = C.banPid(t);
       if (!r) return res.status(409).json({ error: 'they have no messages to tell their device from - ban them from one of their messages instead' });
       return ok(Object.assign({ name: C.nameOf(t) }, r));
     }
-    case 'unbanall': return ok({ unbanned: C.unbanAll() });
+    case 'unbanall':
+      if (mine < 4) return res.status(403).json({ error: 'only the owner can unban everyone' });
+      return ok({ unbanned: C.unbanAll() });
+    case 'ban_approve': case 'ban_deny': {
+      if (mine < 4) return res.status(403).json({ error: 'only the owner approves bans' });
+      const q = S.banRequests.find((x) => x.id === parseInt(b.id, 10));
+      if (!q || !q.open) return res.status(404).json({ error: 'no such request' });
+      q.open = false; q.doneAt = now();
+      if (act === 'ban_deny') { q.result = 'denied'; return ok({ name: q.name }); }
+      let removed = 0, done = false;
+      if (q.pid) { const r = C.banPid(q.pid); if (r) { removed += r.removed || 0; done = true; } }
+      if (q.dev) { removed += C.banDevice(q.dev); done = true; }
+      if (!done) { q.open = true; return res.status(409).json({ error: 'cannot tell their device yet - wait until they post again, or ban them from one of their messages' }); }
+      q.result = 'banned';
+      return ok({ name: q.name, removed });
+    }
+    case 'donor_approve': case 'donor_reject': {
+      if (mine < 4) return res.status(403).json({ error: 'only the owner handles donations' });
+      const c = S.donorClaims.find((x) => x.id === parseInt(b.id, 10));
+      if (!c || !c.open) return res.status(404).json({ error: 'no such claim' });
+      c.open = false; c.doneBy = me; c.doneAt = now();
+      if (act === 'donor_reject') { c.result = 'rejected'; return ok(); }
+      const amt = Math.max(1, Math.min(10000, Math.round(Number(b.amount) || c.amount)));
+      const d = S.donors[c.pid] || { amount: 0 };
+      S.donors[c.pid] = { amount: d.amount + amt, at: now(), name: c.name };
+      c.result = 'approved'; c.amount = amt;
+      return ok({ name: c.name, total: S.donors[c.pid].amount });
+    }
+    case 'donor_set': {
+      if (mine < 4) return res.status(403).json({ error: 'only the owner handles donations' });
+      const t = target(b);
+      if (!t) return res.status(404).json({ error: 'nobody by that name' });
+      const amt = Math.max(0, Math.min(100000, Math.round(Number(b.amount) || 0)));
+      if (amt) S.donors[t] = { amount: amt, at: now(), name: C.nameOf(t) };
+      else delete S.donors[t];
+      return ok({ name: C.nameOf(t), total: amt });
+    }
     case 'report_close': {
       const r = S.reports.find((x) => x.id === parseInt(b.id, 10));
       if (!r) return res.status(404).json({ error: 'no such report' });

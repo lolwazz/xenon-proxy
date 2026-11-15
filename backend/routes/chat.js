@@ -59,6 +59,7 @@ try { generalMsgs = JSON.parse(readFileSync(FILE, 'utf8')); } catch { generalMsg
 if (!Array.isArray(generalMsgs)) generalMsgs = [];
 const general = mkRoom({ id: '', kind: 'general', messages: generalMsgs });
 const rooms = new Map();
+const servers = new Map();           // id -> server (see "servers" below)
 /* Chat identities: pid -> {pid, name, color, last}. A pid is a hash of the
    device's private token, so it can be shown to everyone while only that
    device can act as it. */
@@ -71,11 +72,13 @@ let auditHook = null;                // (pid, action, detail) - staff log (set b
 let mentionHook = null;              // (msg, room) - Xenon AI answering @Xenon (set by routes/xenon.js)
 const logMod = (pid, action, detail) => { try { if (auditHook) auditHook(pid, action, detail); } catch {} };
 const devOf = new Map();             // pid -> last device it posted from (for ban by name)
+let banRequestHook = null;           // (req) - non-owner bans wait for the owner (set by routes/xenon.js)
 let tagHook = null;                  // pid -> {label,color,font,fx} | null (set by routes/xenon.js)
 try {
   const j = JSON.parse(readFileSync(ROOMS_FILE, 'utf8'));
   for (const r of j.rooms || []) rooms.set(r.id, mkRoom(r));
   for (const p of j.people || []) people.set(p.pid, p);
+  for (const sv of j.servers || []) servers.set(sv.id, sv);
   for (const [k, v] of Object.entries(j.roles || {})) roles.set(k, v);
   for (const [k, v] of Object.entries(j.mutes || {})) if (v > Date.now()) mutes.set(k, v);
 } catch {}
@@ -115,7 +118,8 @@ function save() {
   try {
     writeJson(FILE, general.messages);
     writeJson(ROOMS_FILE, {
-      rooms: [...rooms.values()].map((r) => ({ id: r.id, kind: r.kind, name: r.name, members: r.members, owner: r.owner, created: r.created, messages: r.messages })),
+      rooms: [...rooms.values()].map((r) => ({ id: r.id, kind: r.kind, name: r.name, members: r.members, owner: r.owner, created: r.created, messages: r.messages, server: r.server, ckind: r.ckind, topic: r.topic })),
+      servers: [...servers.values()],
       people: [...people.values()],
       roles: Object.fromEntries(roles),
       mutes: Object.fromEntries(mutes),
@@ -169,6 +173,10 @@ function roomOf(req, res, src) {
   const r = rooms.get(id);
   if (!r) { res.status(404).json({ error: 'that chat is gone' }); return null; }
   const pid = pidOf(src.token);
+  if (r.server) {
+    if (srvRank(servers.get(r.server), pid) < 0) { res.status(403).json({ error: 'you are not in that server' }); return null; }
+    return r;
+  }
   if (!pid || !r.members.includes(pid)) { res.status(403).json({ error: 'you are not in that chat' }); return null; }
   return r;
 }
@@ -446,6 +454,11 @@ router.post('/send', express.json({ limit: '32kb' }), (req, res) => {
   const spid = pidOf(token);
   const until = mutes.get(spid) || 0;
   if (until > Date.now()) return res.status(403).json({ error: 'you are muted for ' + Math.ceil((until - Date.now()) / 60000) + ' more min' });
+  if (room.server) {
+    const sv = servers.get(room.server), t = ((sv && sv.mutes) || {})[spid] || 0;
+    if (t > Date.now()) return res.status(403).json({ error: 'you are timed out in this server for ' + Math.ceil((t - Date.now()) / 60000) + ' more min' });
+    if (room.ckind === 'voice') return res.status(400).json({ error: 'that is a voice channel' });
+  }
   const taken = staffName(name);
   if (taken && taken !== spid) return res.status(403).json({ error: 'that name belongs to a staff member - pick another in Settings' });
   const msg = { id: room.nextId++, name, text, date: new Date().toISOString().slice(0, 19), dev: g.dev };
@@ -483,7 +496,8 @@ function ownMessage(req, res, mod) {
   if (i === -1) { res.status(404).json({ error: 'already gone' }); return null; }
   const m = room.messages[i];
   const own = m.owner && m.owner === fpOf(token);
-  if (!own && !(mod && outranks(pidOf(token), m))) { res.status(403).json({ error: 'not yours' }); return null; }
+  const srvMod = mod && room.server && (() => { const sv = servers.get(room.server); const mine = srvRank(sv, pidOf(token)); const theirs = !m.pid ? 0 : sv.owner === m.pid ? 3 : ({ mod: 1, admin: 2 }[(sv.roles || {})[m.pid]] || 0); return mine >= 1 && mine > theirs; })();
+  if (!own && !srvMod && !(mod && outranks(pidOf(token), m))) { res.status(403).json({ error: 'not yours' }); return null; }
   return { i, m, room, own };
 }
 /* Whether a staff member may act on a message: the author must rank below them. */
@@ -678,7 +692,11 @@ function me(req, res, src) {
 }
 
 /* Only a chat's members can enter its call. */
-setCallCheck((id, token) => { const r = rooms.get(id); const pid = pidOf(token); return Boolean(r && pid && r.members.includes(pid)); });
+setCallCheck((id, token) => {
+  const r = rooms.get(id); const pid = pidOf(token);
+  if (r && r.server) return srvRank(servers.get(r.server), pid) >= 0;
+  return Boolean(r && pid && r.members.includes(pid));
+});
 
 /* Who this device is, under the name it chats as. Called on page load. */
 router.post('/hello', express.json({ limit: '2kb' }), (req, res) => {
@@ -810,6 +828,12 @@ router.post('/ban', express.json({ limit: '2kb' }), (req, res) => {
   const m = room.messages.find((x) => x.id === parseInt(b.id, 10));
   if (!m || !m.dev) return res.status(404).json({ error: 'cannot tell who sent that' });
   if (!outranks(pid, m)) return res.status(403).json({ error: 'your rank cannot do that' });
+  /* 2026-11-14: only the owner bans outright; anyone else asks the owner. */
+  if (rankOf(pid) < RANK.owner && banRequestHook) {
+    const r = banRequestHook({ by: pid, pid: m.pid || '', name: m.name, dev: m.dev, text: String(m.text || '').slice(0, 200), reason: String(b.reason || '').slice(0, 120) });
+    if (r && r.error) return res.status(409).json({ error: r.error });
+    return res.json({ ok: true, pending: true });
+  }
   const S = settings();
   if (!S.bannedDevices.includes(m.dev)) setSettings({ bannedDevices: S.bannedDevices.concat([m.dev]) });
   /* Their lines go with them. */
@@ -949,6 +973,293 @@ router.post('/rooms/leave', express.json({ limit: '2kb' }), (req, res) => {
   if (r.owner === pid) r.owner = r.members[0];
   sysMessage(r, nameOf(pid) + ' left the group.');
   res.json({ ok: true });
+});
+
+/* ------------------------------------------------------------ servers */
+
+/* Servers (2026-11-14), Discord-style communities. A server has members,
+   ranks (owner > admin > mod > member), bans, timeouts, an invite code and
+   channels. Every channel is an ordinary room (kind 'channel', server: id)
+   with no member list of its own: roomOf asks the server instead, so
+   sending, editing, reactions, polls, GIFs and calls all work unchanged.
+   Site staff from superadmin up can moderate any server. */
+const SRV_RANK = { member: 0, mod: 1, admin: 2, owner: 3 };
+const SRV_MAX_MEMBERS = 500, SRV_MAX_CHANNELS = 30, SRV_MAX_OWNED = 5, SRV_MAX_JOINED = 50;
+function srvRank(s, pid) {
+  if (!s || !pid) return -1;
+  if (s.owner === pid) return 3;
+  if (rankOf(pid) >= RANK.superadmin) return 3;
+  if (!s.members.includes(pid)) return -1;
+  return SRV_RANK[(s.roles || {})[pid]] || 0;
+}
+function newSrvId() { let id; do { id = 's' + randomBytes(5).toString('hex'); } while (servers.has(id)); return id; }
+function newInvite() {
+  const A = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let c;
+  do { c = ''; for (let i = 0; i < 7; i++) c += A[randomBytes(1)[0] % A.length]; } while ([...servers.values()].some((s) => s.invite === c));
+  return c;
+}
+const cleanChanName = (v) => String(v || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
+const cleanIcon = (v) => [...String(v || '').trim()].slice(0, 2).join('');
+const cleanColour = (v) => (/^#[0-9a-f]{6}$/i.test(String(v || '')) ? String(v) : '');
+function addChannel(s, name, kind) {
+  const r = mkRoom({ id: newRoomId(), kind: 'channel', server: s.id, name, ckind: kind === 'voice' ? 'voice' : 'text', members: [], owner: s.owner, created: new Date().toISOString().slice(0, 19), messages: [] });
+  rooms.set(r.id, r);
+  s.channels.push(r.id);
+  return r;
+}
+function srvCard(s, pid) {
+  const now = Date.now();
+  const my = srvRank(s, pid);
+  return {
+    id: s.id, name: s.name, icon: s.icon || '', color: s.color || '', desc: s.desc || '', public: !!s.public,
+    owner: s.owner, myRank: my, invite: s.invite,
+    channels: s.channels.map((cid) => rooms.get(cid)).filter(Boolean).map((r) => {
+      const last = r.messages[r.messages.length - 1];
+      return { id: r.id, name: r.name, kind: r.ckind || 'text', topic: r.topic || '', latest: last ? last.id : 0, call: r.ckind === 'voice' ? callRoster(r.id) : undefined };
+    }),
+    members: s.members.slice(0, SRV_MAX_MEMBERS).map((p) => {
+      const pp = people.get(p) || {};
+      const until = (s.mutes || {})[p] || 0;
+      return { pid: p, name: pp.name || 'someone', color: pp.color || '', rank: s.owner === p ? 'owner' : ((s.roles || {})[p] || ''), online: now - (pp.last || 0) < 120000, me: p === pid, timeout: until > now ? until : 0 };
+    }),
+    bans: my >= 1 ? (s.bans || []).map((p) => ({ pid: p, name: nameOf(p) })) : [],
+  };
+}
+function srvSys(s, text) {
+  const r = rooms.get(s.channels.find((c) => (rooms.get(c) || {}).ckind !== 'voice') || '');
+  if (r) sysMessage(r, text);
+}
+/* The server a request is about, with the caller's rank in it. */
+function srvOf(req, res, need) {
+  const b = req.body || {};
+  const pid = me(req, res, b);
+  if (!pid) return null;
+  const s = servers.get(String(b.sid || ''));
+  if (!s) { res.status(404).json({ error: 'that server is gone' }); return null; }
+  const rk = srvRank(s, pid);
+  if (rk < 0) { res.status(403).json({ error: 'you are not in that server' }); return null; }
+  if (rk < need) { res.status(403).json({ error: need >= 3 ? 'only the owner can do that' : need === 2 ? 'only admins can do that' : 'only moderators can do that' }); return null; }
+  return { s, pid, rk };
+}
+/* Acting on someone: they must rank below you. */
+function srvTarget(res, ctx, who) {
+  who = String(who || '');
+  if (!who || who === ctx.pid) { res.status(400).json({ error: 'pick someone else' }); return ''; }
+  const theirs = ctx.s.owner === who ? 3 : (SRV_RANK[(ctx.s.roles || {})[who]] || 0);
+  if (theirs >= ctx.rk) { res.status(403).json({ error: 'they rank the same as you or higher' }); return ''; }
+  return who;
+}
+const durText = (mins) => (mins >= 1440 ? Math.round(mins / 1440) + (mins >= 2880 ? ' days' : ' day') : mins >= 60 ? Math.round(mins / 60) + 'h' : mins + ' min');
+
+router.get('/servers', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const pid = pidOf(req.query.token);
+  if (!pid) return res.json({ servers: [] });
+  if (people.has(pid)) people.get(pid).last = Date.now();
+  res.json({ servers: [...servers.values()].filter((s) => s.members.includes(pid)).map((s) => srvCard(s, pid)) });
+});
+
+/* Public servers anyone can join, busiest first. */
+router.get('/servers/discover', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const pid = pidOf(req.query.token);
+  const now = Date.now();
+  const list = [...servers.values()].filter((s) => s.public && !(s.bans || []).includes(pid)).map((s) => ({
+    id: s.id, name: s.name, icon: s.icon || '', color: s.color || '', desc: s.desc || '',
+    members: s.members.length, online: s.members.filter((p) => now - ((people.get(p) || {}).last || 0) < 120000).length,
+    joined: s.members.includes(pid),
+  })).sort((a, b) => b.online - a.online || b.members - a.members).slice(0, 100);
+  res.json({ servers: list });
+});
+
+/* What an invite code points at, before joining. */
+router.get('/servers/invite/:code', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const code = String(req.params.code || '').toLowerCase();
+  const s = [...servers.values()].find((x) => x.invite === code);
+  if (!s) return res.status(404).json({ error: 'that invite is not valid (it may have been reset)' });
+  res.json({ id: s.id, name: s.name, icon: s.icon || '', color: s.color || '', desc: s.desc || '', members: s.members.length });
+});
+
+router.post('/servers/create', express.json({ limit: '4kb' }), (req, res) => {
+  const b = req.body || {};
+  const pid = me(req, res, b);
+  if (!pid) return;
+  if (!gate(req, res, cleanName(b.name))) return;
+  const name = censor(cleanRoomName(b.title));
+  if (!name) return res.status(400).json({ error: 'give your server a name' });
+  const all = [...servers.values()];
+  if (all.filter((s) => s.owner === pid).length >= SRV_MAX_OWNED) return res.status(400).json({ error: 'you can own ' + SRV_MAX_OWNED + ' servers' });
+  if (all.filter((s) => s.members.includes(pid)).length >= SRV_MAX_JOINED) return res.status(400).json({ error: 'you are in too many servers - leave some first' });
+  const s = {
+    id: newSrvId(), name, icon: censor(cleanIcon(b.icon)), color: cleanColour(b.color), desc: censor(String(b.desc || '').slice(0, 160)),
+    public: b.public === true, owner: pid, members: [pid], roles: {}, bans: [], mutes: {}, invite: newInvite(), channels: [],
+    created: new Date().toISOString().slice(0, 19),
+  };
+  servers.set(s.id, s);
+  addChannel(s, 'general', 'text');
+  addChannel(s, 'memes', 'text');
+  addChannel(s, 'Lounge', 'voice');
+  srvSys(s, nameOf(pid) + ' made ' + name + '. Invite friends with code ' + s.invite + '.');
+  logMod(pid, 'server_create', { server: name });
+  persist();
+  res.json({ ok: true, server: srvCard(s, pid) });
+});
+
+/* Join by invite code, or straight in when the server is public. */
+router.post('/servers/join', express.json({ limit: '2kb' }), (req, res) => {
+  const b = req.body || {};
+  const pid = me(req, res, b);
+  if (!pid) return;
+  if (!gate(req, res, cleanName(b.name))) return;
+  const code = String(b.code || '').trim().toLowerCase().replace(/^.*[#/=]/, '');
+  const s = code ? [...servers.values()].find((x) => x.invite === code) : servers.get(String(b.sid || ''));
+  if (!s || (!code && !s.public)) return res.status(404).json({ error: 'that invite is not valid (it may have been reset)' });
+  if ((s.bans || []).includes(pid)) return res.status(403).json({ error: 'you are banned from ' + s.name });
+  if (s.members.includes(pid)) return res.json({ ok: true, server: srvCard(s, pid) });
+  if (s.members.length >= SRV_MAX_MEMBERS) return res.status(400).json({ error: 'that server is full' });
+  if ([...servers.values()].filter((x) => x.members.includes(pid)).length >= SRV_MAX_JOINED) return res.status(400).json({ error: 'you are in too many servers - leave some first' });
+  s.members.push(pid);
+  srvSys(s, nameOf(pid) + ' joined the server. Welcome!');
+  persist();
+  res.json({ ok: true, server: srvCard(s, pid) });
+});
+
+router.post('/servers/leave', express.json({ limit: '2kb' }), (req, res) => {
+  const c = srvOf(req, res, 0);
+  if (!c) return;
+  if (c.s.owner === c.pid) return res.status(400).json({ error: 'you own this server - give it to someone or delete it' });
+  c.s.members = c.s.members.filter((p) => p !== c.pid);
+  delete c.s.roles[c.pid];
+  srvSys(c.s, nameOf(c.pid) + ' left the server.');
+  persist();
+  res.json({ ok: true });
+});
+
+router.post('/servers/edit', express.json({ limit: '4kb' }), (req, res) => {
+  const c = srvOf(req, res, 2);
+  if (!c) return;
+  const b = req.body;
+  if (b.title !== undefined) { const n = censor(cleanRoomName(b.title)); if (n) c.s.name = n; }
+  if (b.icon !== undefined) c.s.icon = censor(cleanIcon(b.icon));
+  if (b.color !== undefined) c.s.color = cleanColour(b.color);
+  if (b.desc !== undefined) c.s.desc = censor(String(b.desc || '').slice(0, 160));
+  if (b.public !== undefined) c.s.public = b.public === true;
+  if (b.resetInvite === true) c.s.invite = newInvite();
+  persist();
+  res.json({ ok: true, server: srvCard(c.s, c.pid) });
+});
+
+router.post('/servers/delete', express.json({ limit: '2kb' }), (req, res) => {
+  const c = srvOf(req, res, 3);
+  if (!c) return;
+  for (const cid of c.s.channels) rooms.delete(cid);
+  servers.delete(c.s.id);
+  logMod(c.pid, 'server_delete', { server: c.s.name });
+  persist();
+  res.json({ ok: true });
+});
+
+/* Channels: add, rename, topic, delete, move. Admins and up. */
+router.post('/servers/channel', express.json({ limit: '4kb' }), (req, res) => {
+  const c = srvOf(req, res, 2);
+  if (!c) return;
+  const b = req.body, s = c.s;
+  const nameFor = (kind, v) => (kind === 'voice' ? censor(cleanRoomName(v)) : cleanChanName(censor(String(v || ''))));
+  if (b.action === 'add') {
+    if (s.channels.length >= SRV_MAX_CHANNELS) return res.status(400).json({ error: 'a server can have ' + SRV_MAX_CHANNELS + ' channels' });
+    const kind = b.kind === 'voice' ? 'voice' : 'text';
+    const n = nameFor(kind, b.cname);
+    if (!n) return res.status(400).json({ error: 'name the channel' });
+    addChannel(s, n, kind);
+  } else {
+    const r = rooms.get(String(b.cid || ''));
+    if (!r || r.server !== s.id) return res.status(404).json({ error: 'that channel is gone' });
+    if (b.action === 'rename') {
+      const n = nameFor(r.ckind, b.cname);
+      if (!n) return res.status(400).json({ error: 'name the channel' });
+      r.name = n;
+    } else if (b.action === 'topic') {
+      r.topic = censor(String(b.topic || '').replace(/\s+/g, ' ').trim().slice(0, 120));
+    } else if (b.action === 'delete') {
+      const texts = s.channels.filter((x) => (rooms.get(x) || {}).ckind !== 'voice').length;
+      if (r.ckind !== 'voice' && texts <= 1) return res.status(400).json({ error: 'a server needs at least one text channel' });
+      s.channels = s.channels.filter((x) => x !== r.id);
+      rooms.delete(r.id);
+    } else if (b.action === 'move') {
+      const i = s.channels.indexOf(r.id), j = i + (b.dir === 'up' ? -1 : 1);
+      if (j >= 0 && j < s.channels.length) { s.channels[i] = s.channels[j]; s.channels[j] = r.id; }
+    } else return res.status(400).json({ error: 'unknown action' });
+  }
+  persist();
+  res.json({ ok: true, server: srvCard(s, c.pid) });
+});
+
+/* Ranks: the owner makes admins, admins make mods. Handing over: owner only. */
+router.post('/servers/role', express.json({ limit: '2kb' }), (req, res) => {
+  const c = srvOf(req, res, 2);
+  if (!c) return;
+  const b = req.body, s = c.s;
+  const who = String(b.who || '');
+  if (!s.members.includes(who)) return res.status(400).json({ error: 'they are not in this server' });
+  if (b.role === 'owner') {
+    if (c.rk < 3 || who === s.owner) return res.status(403).json({ error: 'only the owner can do that' });
+    s.roles[s.owner] = 'admin';
+    s.owner = who;
+    delete s.roles[who];
+    srvSys(s, nameOf(c.pid) + ' gave the server to ' + nameOf(who) + '.');
+  } else {
+    if (!srvTarget(res, c, who)) return;
+    const role = b.role === 'admin' || b.role === 'mod' ? b.role : '';
+    if ((SRV_RANK[role] || 0) >= c.rk) return res.status(403).json({ error: 'you can only give ranks below your own' });
+    if (role) s.roles[who] = role; else delete s.roles[who];
+    srvSys(s, nameOf(who) + (role ? ' is now ' + (role === 'admin' ? 'an admin' : 'a moderator') : ' is no longer staff') + '.');
+  }
+  persist();
+  res.json({ ok: true, server: srvCard(s, c.pid) });
+});
+
+/* Moderation: kick, ban, unban, timeout. Moderators and up. */
+router.post('/servers/mod', express.json({ limit: '2kb' }), (req, res) => {
+  const c = srvOf(req, res, 1);
+  if (!c) return;
+  const b = req.body, s = c.s;
+  const act = String(b.action || '');
+  if (act === 'unban') {
+    s.bans = (s.bans || []).filter((p) => p !== String(b.who || ''));
+  } else {
+    const who = srvTarget(res, c, b.who);
+    if (!who) return;
+    const reason = String(b.reason || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const why = reason ? ' (' + reason + ')' : '';
+    if (act === 'kick' || act === 'ban') {
+      s.members = s.members.filter((p) => p !== who);
+      delete s.roles[who];
+      if (act === 'ban') {
+        s.bans = [...new Set([...(s.bans || []), who])];
+        if (b.purge === true) {
+          for (const cid of s.channels) {
+            const r = rooms.get(cid);
+            if (!r) continue;
+            r.messages = r.messages.filter((m) => {
+              const go = m.pid === who && Date.now() - Date.parse(m.date + 'Z') < 3600000;
+              if (go) noteRemoved(r, m.id);
+              return !go;
+            });
+          }
+        }
+      }
+      srvSys(s, nameOf(who) + ' was ' + (act === 'ban' ? 'banned' : 'kicked') + ' by ' + nameOf(c.pid) + why + '.');
+    } else if (act === 'timeout') {
+      const mins = Math.max(0, Math.min(10080, parseInt(b.mins, 10) || 0));
+      s.mutes = s.mutes || {};
+      if (mins) s.mutes[who] = Date.now() + mins * 60000; else delete s.mutes[who];
+      srvSys(s, mins ? nameOf(who) + ' was timed out for ' + durText(mins) + ' by ' + nameOf(c.pid) + why + '.' : 'The timeout on ' + nameOf(who) + ' was lifted.');
+    } else return res.status(400).json({ error: 'unknown action' });
+  }
+  persist();
+  res.json({ ok: true, server: srvCard(s, c.pid) });
 });
 
 /* ------------------------------------------------------------ GIF search */
@@ -1138,6 +1449,23 @@ export const chatAdmin = {
   mute(pid, min) { if (min > 0) mutes.set(pid, Date.now() + min * 60000); else mutes.delete(pid); persist(); },
   touchAuthor(pid) { touchAuthor(pid); persist(); },
   setTagHook(fn) { tagHook = fn; },
+  setBanRequestHook(fn) { banRequestHook = fn; },
+  /* Ban one device and remove its lines everywhere (owner-approved requests). */
+  banDevice(dev) {
+    if (!dev) return 0;
+    const S = settings();
+    if (!S.bannedDevices.includes(dev)) setSettings({ bannedDevices: S.bannedDevices.concat([dev]) });
+    let n = 0;
+    for (const room of allRooms()) {
+      const gone = room.messages.filter((x) => x.dev === dev).map((x) => x.id);
+      if (!gone.length) continue;
+      room.messages = room.messages.filter((x) => x.dev !== dev);
+      for (const id of gone) noteRemoved(room, id);
+      n += gone.length;
+    }
+    persist();
+    return n;
+  },
   setAuditHook(fn) { auditHook = fn; },
   setMentionHook(fn) { mentionHook = fn; },
   isMuted(pid) { return (mutes.get(pid) || 0) > Date.now(); },

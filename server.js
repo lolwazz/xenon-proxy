@@ -16,6 +16,7 @@ import { isBlocked, stats as adStats } from './backend/adblock.js';
 import { mountAuth, checkRequest, checkUpgrade, authEnabled } from './backend/auth.js';
 import chatRouter, { commentsFeed, MEDIA_DIR as CHAT_MEDIA } from './backend/routes/chat.js';
 import aiRouter from './backend/routes/ai.js';
+import storeRouter from './backend/routes/store.js';
 import xenonRouter from './backend/routes/xenon.js';
 import xeunesRouter from './backend/routes/xeunes.js';
 import suggestRouter from './backend/routes/suggest.js';
@@ -370,6 +371,8 @@ app.use('/api/admin', adminApi);
 app.get('/api/site/notice', siteNotice);
 /* The AI bot. Keys live in .env and never reach the browser. */
 app.use('/api/ai', aiRouter);
+// App Store + Extensions (community apps, CSS extensions, ratings, AI make).
+app.use('/api/store', storeRouter);
 /* The chat page still reads its messages from the WordPress comments URL. */
 app.get('/wp-json/wp/v2/comments', commentsFeed);
 /* Mounted twice. /api/ac is the one the page calls: some content blockers
