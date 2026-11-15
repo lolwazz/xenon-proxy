@@ -22,6 +22,7 @@
  */
 import express from 'express';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { settings, clientIp, ipHash } from '../site-settings.js';
@@ -96,6 +97,26 @@ router.get('/channels', async (req, res) => {
 /* ---------------------------------------------------------- reading */
 const caches = new Map(); /* channel id -> { at, list, error, busy } */
 function img(u) { return u ? '/api/dc/img?u=' + encodeURIComponent(u) : ''; }
+
+/* Who posted which site message (2026-11-15), so people can edit and
+   delete their own: message id -> { o: owner key, ch, r: reply-to info }.
+   The owner key is a hash of the visitor's chat token, never the token. */
+const OWN_FILE = join(ROOT, 'backend', 'data', 'discord-bridge-owners.json');
+let owners = {};
+try { owners = JSON.parse(readFileSync(OWN_FILE, 'utf8')); } catch {}
+let ownTimer = null;
+function saveOwners() {
+  clearTimeout(ownTimer);
+  ownTimer = setTimeout(() => {
+    const ids = Object.keys(owners);
+    if (ids.length > 5000) for (const id of ids.sort().slice(0, ids.length - 5000)) delete owners[id];
+    try { writeFileSync(OWN_FILE, JSON.stringify(owners)); } catch {}
+  }, 1000);
+}
+const ownerKey = (token) => (token ? createHash('sha256').update('dcown:' + String(token)).digest('hex').slice(0, 24) : '');
+const REPLY_LINE = /^> ↪ [^\n]*\n/;
+function snippet(s) { return String(s || '').replace(/\s+/g, ' ').trim().slice(0, 80); }
+
 function shape(m, names) {
   const men = Object.fromEntries((m.mentions || []).map((u) => [u.id, u.global_name || u.username]));
   let text = String(m.content || '')
@@ -110,6 +131,16 @@ function shape(m, names) {
   const a = m.author || {};
   const web = Boolean(m.webhook_id);
   const avatar = a.avatar ? 'https://cdn.discordapp.com/avatars/' + a.id + '/' + a.avatar + '.png?size=64' : '';
+  /* Replies: real Discord replies carry the message they answer; site
+     replies (webhooks can't make real ones) start with a quote line, which
+     is shown as the reply preview instead of as text. */
+  let reply = null;
+  const own = owners[m.id];
+  if (own && own.r) { reply = own.r; text = text.replace(REPLY_LINE, ''); }
+  else if (m.referenced_message) {
+    const rm = m.referenced_message; const ra = rm.author || {};
+    reply = { id: rm.id, name: rm.webhook_id ? ra.username : ra.global_name || ra.username || 'user', text: snippet(rm.content) };
+  }
   return {
     id: m.id,
     name: web ? a.username : a.global_name || a.username || 'user',
@@ -119,6 +150,8 @@ function shape(m, names) {
     text: text.slice(0, 2000),
     imgs: (m.attachments || []).filter((x) => /^image\//.test(x.content_type || '')).slice(0, 4).map((x) => img(x.proxy_url || x.url)),
     ts: Date.parse(m.timestamp) || 0,
+    edited: Boolean(m.edited_timestamp),
+    reply,
   };
 }
 router.get('/messages', async (req, res) => {
@@ -140,7 +173,10 @@ router.get('/messages', async (req, res) => {
     caches.set(id, k);
     if (caches.size > 100) caches.clear();
   }
-  res.json({ messages: k.list, error: k.error || undefined, ro: c.byId.get(id).ro });
+  /* Mark the asker's own messages so the site can offer Edit / Delete. */
+  const me = ownerKey(req.query.t);
+  const list = me ? k.list.map((m) => (owners[m.id] && owners[m.id].o === me ? { ...m, mine: true } : m)) : k.list;
+  res.json({ messages: list, error: k.error || undefined, ro: c.byId.get(id).ro });
 });
 
 /* ---------------------------------------------------------- images */
@@ -213,16 +249,71 @@ router.post('/send', express.json({ limit: '8kb' }), async (req, res) => {
     const p = presenceMod && presenceMod.pfpByName ? presenceMod.pfpByName(prof || name) : null;
     if (p && p.pfp && /^\/avatars\/[\w.-]+$/.test(p.pfp)) avatar = 'https://app.zpack.beauty' + p.pfp;
   } catch {}
+  /* Replying: webhooks can't make real Discord replies, so the message
+     starts with a quote line naming who it answers; the site shows it as a
+     reply preview. */
+  let r0 = null;
+  if (b.reply) {
+    const k0 = caches.get(ch);
+    const t = k0 && k0.list.find((x) => x.id === String(b.reply));
+    if (t) r0 = { id: t.id, name: String(t.name).replace(/ \(Xenon\)$/, ''), text: snippet(t.text) };
+  }
+  const content = r0 ? '> ↪ **' + r0.name.replace(/[*_`~|>]/g, '') + '**: ' + (r0.text || '...').replace(/[\n>]/g, ' ') + '\n' + text : text;
+  const me = ownerKey(b.token);
   try {
     const h = await hookFor(ch);
     const r = await fetch('https://discord.com/api/webhooks/' + h.id + '/' + h.token + '?wait=true', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: text, username: name + ' (Xenon)', avatar_url: avatar, allowed_mentions: { parse: [] } }),
+      body: JSON.stringify({ content: content.slice(0, 2000), username: name + ' (Xenon)', avatar_url: avatar, allowed_mentions: { parse: [] } }),
     });
     if (!r.ok) return res.status(502).json({ error: 'Discord said ' + r.status });
+    const msg = await r.json().catch(() => null);
+    if (msg && msg.id && me) { owners[msg.id] = { o: me, ch, r: r0 || undefined }; saveOwners(); }
     const k = caches.get(ch); if (k) k.at = 0;
-    res.json({ ok: true });
+    res.json({ ok: true, id: msg && msg.id });
   } catch { res.status(502).json({ error: 'could not reach Discord' }); }
+});
+
+/* Edit / delete your own site messages, through the webhook that posted
+   them. Only the person whose token posted it can (owners map). */
+async function ownMsg(req, res) {
+  const b = req.body || {};
+  const ip = clientIp(req);
+  if (limited('e:' + ip, 20, 60000)) { res.status(429).json({ error: 'slow down a moment' }); return null; }
+  const id = String(b.id || '');
+  const own = owners[id];
+  const me = ownerKey(b.token);
+  if (!own || !me || own.o !== me) { res.status(403).json({ error: 'you can only change your own messages' }); return null; }
+  const h = await hookFor(own.ch).catch(() => null);
+  if (!h) { res.status(502).json({ error: 'could not reach Discord' }); return null; }
+  return { own, h, id };
+}
+router.post('/delete', express.json({ limit: '2kb' }), async (req, res) => {
+  const o = await ownMsg(req, res);
+  if (!o) return;
+  const r = await fetch('https://discord.com/api/webhooks/' + o.h.id + '/' + o.h.token + '/messages/' + o.id, { method: 'DELETE' }).catch(() => null);
+  if (!r || (!r.ok && r.status !== 404)) return res.status(502).json({ error: 'Discord would not delete it' });
+  delete owners[o.id]; saveOwners();
+  const k = caches.get(o.own.ch); if (k) { k.list = k.list.filter((x) => x.id !== o.id); k.at = 0; }
+  res.json({ ok: true });
+});
+router.post('/edit', express.json({ limit: '8kb' }), async (req, res) => {
+  const b = req.body || {};
+  let text = String(b.text || '').replace(/\r/g, '').trim().slice(0, 500);
+  if (!text) return res.status(400).json({ error: 'empty message' });
+  if (hasSlur(text)) return res.status(400).json({ error: 'that message has a word that is not allowed' });
+  text = text.replace(/@(everyone|here)/gi, '@​$1');
+  const o = await ownMsg(req, res);
+  if (!o) return;
+  const r0 = o.own.r;
+  const content = r0 ? '> ↪ **' + r0.name.replace(/[*_`~|>]/g, '') + '**: ' + (r0.text || '...').replace(/[\n>]/g, ' ') + '\n' + text : text;
+  const r = await fetch('https://discord.com/api/webhooks/' + o.h.id + '/' + o.h.token + '/messages/' + o.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: content.slice(0, 2000), allowed_mentions: { parse: [] } }),
+  }).catch(() => null);
+  if (!r || !r.ok) return res.status(502).json({ error: 'Discord would not edit it' });
+  const k = caches.get(o.own.ch); if (k) k.at = 0;
+  res.json({ ok: true });
 });
 
 export default router;
