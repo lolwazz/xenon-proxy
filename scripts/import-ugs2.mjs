@@ -26,7 +26,13 @@ const SKIP = new Set(['claviamasters.html', 'claviamastersbuggy.html', 'clhelios
 
 const index = JSON.parse(fs.readFileSync(path.join(G, 'index.json'), 'utf8'));
 const hidden = JSON.parse(fs.readFileSync(path.join(G, 'index-hidden.json'), 'utf8'));
-const have = new Set(index.map((g) => path.basename(g.f).toLowerCase()));
+/* Same game under another file name (clbrawlstars vs brawlstars) counts as
+   one we have: compare names with the cl prefix, punctuation and filler words
+   removed. Matching by file name alone let in 242 copies on the first run. */
+const STOP = /(unblocked|online|game|games|original|html5|html|full|offline|ugs|index)/g;
+const key = (s) => s.toLowerCase().replace(/\.html?$/, '').replace(/^.*\//, '').replace(/^cl(?=[a-z0-9])/, '').replace(/\(\d+\)/g, '').replace(/[^a-z0-9]/g, '').replace(STOP, '');
+const have = new Set();
+index.forEach((g) => { have.add(key(g.f)); have.add(key(g.t)); });
 const hid = new Set(hidden.map((g) => path.basename(g.f).toLowerCase()));
 
 /* ---- analytics stripping (same rules as strip-trackers.mjs, plus ads) */
@@ -100,17 +106,21 @@ if (!DRY) fs.mkdirSync(OUT, { recursive: true });
 for (const f of files) {
   const k = f.toLowerCase();
   if (SKIP.has(k) || hid.has(k)) { skipped++; continue; }
-  if (have.has(k)) { already++; continue; }
+  const t = toTitle(f);
+  if (!key(f) || have.has(key(f)) || have.has(key(t))) { already++; continue; }
+  have.add(key(f)); have.add(key(t));
   const raw = fs.readFileSync(path.join(SRC, f), 'utf8');
   const { out, n } = strip(raw);
   if (n) stripped++;
   bytes += Buffer.byteLength(out);
   if (!DRY) fs.writeFileSync(path.join(OUT, f), out);
-  entries.push({ f: 'ugs2/' + f, t: toTitle(f) });
+  entries.push({ f: 'ugs2/' + f, t });
   added++;
 }
 if (!DRY && entries.length) {
-  const next = index.concat(entries).sort((a, b) => a.t.localeCompare(b.t, 'en', { numeric: true }));
+  /* The existing order is curated (pinned games first) - never re-sort it. */
+  entries.sort((a, b) => a.t.localeCompare(b.t, 'en', { numeric: true }));
+  const next = index.concat(entries);
   fs.writeFileSync(path.join(G, 'index.json'), JSON.stringify(next));
 }
 console.log({ added, alreadyHad: already, leftOut: skipped, trackersStripped: stripped, MB: Math.round(bytes / 1048576), dry: DRY });
