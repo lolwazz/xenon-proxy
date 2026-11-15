@@ -29,6 +29,9 @@ const MAX = 25 * 1024 * 1024;
 // oversized files.
 const KEEP_ON_PROXY = /\.(nds|gba|gbc|gb|nes|sfc|smc|n64|z64|v64|iso|cso|3ds|cia|gen|md|sms|gg|pce|psx|cue|chd|xci|nsp|wbfs|gcm|rvz|zip|7z|rar)$/i;
 const FILE_LIMIT = 20000;
+/* Game folders the proxy serves (2026-11-15): ugs2 is the second UGS pack
+   (bubbls/ugs-singlefile, ~1,300 games, 287 MB) - too many files for Pages. */
+const PROXY_FOLDERS = ['/ugs2'];
 
 /* "Watch me play" (2026-11-07): each game page's copy gets xn-watch.js; the
    originals in public/g are never touched. */
@@ -44,6 +47,9 @@ const big = [];
     if (e.name === '.git' || e.name === '.DS_Store' || e.name === 'Thumbs.db') continue;
     const src = path.join(dir, e.name);
     const r = rel + '/' + e.name;
+    /* Whole folders served by the proxy (one redirect each) instead of
+       copied, to stay under the Pages file limit. See PROXY_FOLDERS. */
+    if (PROXY_FOLDERS.some((d) => r === d || r.startsWith(d + '/'))) continue;
     if (e.isDirectory()) { walk(src, r); continue; }
     const st = fs.statSync(src);
     if (st.size > MAX || KEEP_ON_PROXY.test(e.name)) { big.push(r); continue; }
@@ -91,6 +97,8 @@ const redirects = [
   '# Over the 25 MB file limit, or a console ROM: served by the proxy instead.',
   ...[...exact].map((r) => '/g' + r + ' ' + PROXY + '/g' + r + ' 302'),
   ...[...folders].map((d) => '/g' + d + '/* ' + PROXY + '/g' + d + '/:splat 302'),
+  '# Whole game folders the proxy serves (PROXY_FOLDERS).',
+  ...PROXY_FOLDERS.map((d) => '/g' + d + '/* ' + PROXY + '/g' + d + '/:splat 302'),
   // Games the proxy builds on the fly in server.js, with no file in public/g
   // to copy - without these they are a plain 404 on the games site.
   '# Served by a route in server.js, not a file.',
