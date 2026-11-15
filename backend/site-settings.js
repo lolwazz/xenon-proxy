@@ -7,7 +7,9 @@ import { createHash, randomBytes } from 'node:crypto';
  * lock / slow mode / word filter / bans / pinned message, the site banner,
  * maintenance mode, voice lock, AI off. One small JSON file. */
 
-const FILE = join(dirname(fileURLToPath(import.meta.url)), 'data', 'site-settings.json');
+/* SITE_SETTINGS_FILE lets a test copy of the server keep its own settings
+   (bans, announcements) instead of writing into the live ones (2026-11-14). */
+const FILE = process.env.SITE_SETTINGS_FILE || join(dirname(fileURLToPath(import.meta.url)), 'data', 'site-settings.json');
 
 const DEFAULTS = {
   chatLocked: false,

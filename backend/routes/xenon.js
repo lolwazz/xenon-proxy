@@ -71,6 +71,8 @@ const S = {
   /* Ban requests (2026-11-14): only the owner bans; other staff ask. */
   banRequests: [],            // {id, at, by, byName, pid, name, dev, text, reason, open, result}
   nextBanReq: 1,
+  /* Typing lines under the logo on the home page (2026-11-14), set by staff. */
+  taglines: ['games, movies, music and chat in one place', 'made for people who are bored in class', 'new games every week', 'tell your friends'],
 };
 try { Object.assign(S, JSON.parse(readFileSync(FILE, 'utf8'))); } catch {}
 let saveT = null;
@@ -366,6 +368,51 @@ router.post('/giveaway/join', json, (req, res) => {
   if (!g.entrants.includes(pid)) g.entrants.push(pid);
   save();
   res.json({ ok: true, n: g.entrants.length });
+});
+
+/* ------------------------------------------------------------ leaderboard page (2026-11-14) */
+/* Overall: total time played. By game: time in one game file. Avatars
+   come from the profiles (presence.js), matched by chat name. */
+let presenceMod = null;
+async function pfpOf(name) {
+  if (presenceMod === null) presenceMod = await import('./presence.js').catch(() => false);
+  return presenceMod && presenceMod.pfpByName ? presenceMod.pfpByName(name) : null;
+}
+const lbCache = new Map();
+router.get('/leaderboard', async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=30');
+  const game = String(req.query.game || '').slice(0, 200);
+  const key = 'lb:' + game;
+  const hit = lbCache.get(key);
+  if (hit && now() - hit.at < 30e3) return res.json(hit.v);
+  const rows = Object.entries(S.play)
+    .map(([pid, p]) => ({ pid, name: C.nameOf(pid) || p.n || '', ms: game ? ((p.g || {})[game] || 0) : (p.ms || 0) }))
+    .filter((x) => x.name && x.ms >= 60e3)
+    .sort((a, b) => b.ms - a.ms)
+    .slice(0, 100);
+  const out = [];
+  for (const x of rows) {
+    const pf = await pfpOf(x.name);
+    out.push({ name: x.name, ms: x.ms, pfp: pf ? pf.pfp : '', border: pf ? pf.border : 'none' });
+  }
+  const v = { game, players: out };
+  lbCache.set(key, { at: now(), v });
+  if (lbCache.size > 300) lbCache.delete(lbCache.keys().next().value);
+  res.json(v);
+});
+/* The games people play most, for the By game picker. */
+router.get('/leaderboard/games', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=60');
+  const tot = {};
+  for (const p of Object.values(S.play)) for (const [f, ms] of Object.entries(p.g || {})) {
+    const t = tot[f] || (tot[f] = { f, ms: 0, players: 0 });
+    t.ms += ms; t.players++;
+  }
+  res.json({ games: Object.values(tot).filter((g) => g.ms >= 60e3).sort((a, b) => b.ms - a.ms).slice(0, 300) });
+});
+router.get('/taglines', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json({ lines: S.taglines || [] });
 });
 
 /* ------------------------------------------------------------ hall (leaderboard, wall, staff) */
@@ -689,6 +736,7 @@ router.get('/staff/info', (req, res) => {
     people, tags: S.tags, wall: S.wall, links: S.links, tv: S.tv, event: S.event, gotd: gameOfDay(),
     giveaway: S.giveaway, premiumOn: S.premiumOn, notes: S.notes.slice(-20).reverse(),
     reports: perms.includes('mute') ? S.reports.filter((r) => r.open).slice(-100).reverse() : [],
+    taglines: S.taglines || [],
     donorClaims: C.rankOf(pid) >= 4 ? S.donorClaims.filter((c) => c.open).slice(-100).reverse() : null,
     banRequests: C.rankOf(pid) >= 4 ? S.banRequests.filter((x) => x.open).slice(-100).reverse() : null,
     donors: C.rankOf(pid) >= 4 ? Object.entries(S.donors).map(([p, d]) => ({ pid: p, name: C.nameOf(p) || d.name, amount: d.amount, at: d.at })).sort((a, b) => b.amount - a.amount) : null,
@@ -710,7 +758,7 @@ router.post('/staff', json, (req, res) => {
     gotd: 'gotd', gotd_clear: 'gotd', links: 'links', premium: 'premium', premium_revoke: 'premium',
     giveaway: 'giveaway', giveaway_draw: 'giveaway', giveaway_cancel: 'giveaway', premium_switch: 'premium',
     tag_create: 'tags', tag_delete: 'tags', tag_assign: 'tags', tag_perms: 'tagperms',
-    role: 'tagperms', mute: 'mute', stealth: 'mute', warn: 'mute', kick: 'mute', unmute: 'mute', report_close: 'mute', donor_approve: 'tagperms', donor_reject: 'tagperms', donor_set: 'tagperms', ban_approve: 'tagperms', ban_deny: 'tagperms', purge: 'clear', banname: 'clear', unbanall: 'tagperms', say: 'say', clear: 'clear', slow: 'slow', lock: 'slow', banner: 'banner',
+    role: 'tagperms', mute: 'mute', stealth: 'mute', warn: 'mute', kick: 'mute', unmute: 'mute', report_close: 'mute', taglines: 'banner', donor_approve: 'tagperms', donor_reject: 'tagperms', donor_set: 'tagperms', ban_approve: 'tagperms', ban_deny: 'tagperms', purge: 'clear', banname: 'clear', unbanall: 'tagperms', say: 'say', clear: 'clear', slow: 'slow', lock: 'slow', banner: 'banner',
   }[act];
   if (!need) return res.status(400).json({ error: 'unknown action' });
   if (!can(pid, need)) return res.status(403).json({ error: 'you do not have the "' + need + '" permission' });
@@ -915,6 +963,11 @@ router.post('/staff', json, (req, res) => {
       if (!done) { q.open = true; return res.status(409).json({ error: 'cannot tell their device yet - wait until they post again, or ban them from one of their messages' }); }
       q.result = 'banned';
       return ok({ name: q.name, removed });
+    }
+    case 'taglines': {
+      const lines = (Array.isArray(b.lines) ? b.lines : []).map((x) => str(x, 90)).filter(Boolean).slice(0, 30);
+      S.taglines = lines;
+      return ok({ lines });
     }
     case 'donor_approve': case 'donor_reject': {
       if (mine < 4) return res.status(403).json({ error: 'only the owner handles donations' });

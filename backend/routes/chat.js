@@ -29,7 +29,11 @@ const MAX_LINES = 40;
 const MIN_GAP_MS = 250;             // the quickest two messages from one device can be
 const KEEP = 3000;                  // oldest messages drop off past this
 const MAX_ATT = 6;                  // pictures per message
-const UPLOAD_MAX = 8 * 1024 * 1024;
+const UPLOAD_MAX = 25 * 1024 * 1024;  // the biggest kind (video); each kind has its own limit below
+/* 2026-11-14: videos and audio too. Limits per kind, checked on the real
+   file contents (sniff), never on what the browser says it is. */
+const KIND_MAX = { img: 8 * 1024 * 1024, aud: 15 * 1024 * 1024, vid: 25 * 1024 * 1024 };
+const VIDEO_EXT = ['mp4', 'webm'], AUDIO_EXT = ['mp3', 'm4a', 'ogg', 'wav', 'weba'];
 const MEDIA_CAP = 4 * 1024 ** 3;    // uploads stop past 4 GB of pictures on disk
 const REMOTE_MAX = 15 * 1024 * 1024;
 
@@ -225,6 +229,17 @@ function sniff(b) {
   if (b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
   if (b.length > 10) { const g = b.toString('latin1', 0, 6); if (g === 'GIF87a' || g === 'GIF89a') return 'gif'; }
   if (b.length > 30 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'webp';
+  /* video and audio */
+  if (b.length > 12 && b.toString('latin1', 4, 8) === 'ftyp') {
+    const brand = b.toString('latin1', 8, 12);
+    if (/^(M4A |M4B |F4A )/.test(brand)) return 'm4a';
+    if (/^(qt  )/.test(brand)) return '';            // QuickTime .mov: most browsers cannot play it
+    return 'mp4';
+  }
+  if (b.length > 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'webm';
+  if (b.length > 4 && b.toString('latin1', 0, 4) === 'OggS') return 'ogg';
+  if (b.length > 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WAVE') return 'wav';
+  if (b.length > 3 && (b.toString('latin1', 0, 3) === 'ID3' || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0))) return 'mp3';
   return '';
 }
 
@@ -272,8 +287,12 @@ router.post('/upload', express.raw({ type: () => true, limit: UPLOAD_MAX }), (re
   if (recent.length >= 120) return res.status(429).json({ error: 'too many pictures - wait a few minutes' });
   const buf = req.body;
   if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'that file is empty' });
-  const ext = sniff(buf);
-  if (!ext) return res.status(415).json({ error: 'only PNG, JPEG, GIF or WebP pictures' });
+  let ext = sniff(buf);
+  if (!ext) return res.status(415).json({ error: 'that file type is not supported - send a picture, an MP4/WebM video, or MP3/M4A/OGG/WAV audio' });
+  /* A WebM can be audio only (voice messages): the page says so with ?k=aud. */
+  if (ext === 'webm' && req.query.k === 'aud') ext = 'weba';
+  const kind = VIDEO_EXT.includes(ext) ? 'vid' : AUDIO_EXT.includes(ext) ? 'aud' : 'img';
+  if (buf.length > KIND_MAX[kind]) return res.status(413).json({ error: (kind === 'vid' ? 'videos' : kind === 'aud' ? 'audio files' : 'pictures') + ' can be up to ' + (KIND_MAX[kind] / 1048576) + ' MB' });
   const name = createHash('sha1').update(buf).digest('hex') + '.' + ext;
   const file = join(MEDIA_DIR, name);
   if (!existsSync(file)) {
@@ -289,8 +308,8 @@ router.post('/upload', express.raw({ type: () => true, limit: UPLOAD_MAX }), (re
   }
   recent.push(now);
   upSeen.set(g.dev, recent);
-  const d = dims(buf, ext) || {};
-  res.json({ ok: true, u: '/chatmedia/' + name, k: ext === 'gif' ? 'gif' : 'img', w: d.w || 0, h: d.h || 0 });
+  const d = kind === 'img' ? dims(buf, ext) || {} : {};
+  res.json({ ok: true, u: '/chatmedia/' + name, k: kind === 'img' ? (ext === 'gif' ? 'gif' : 'img') : kind, w: d.w || 0, h: d.h || 0, size: buf.length });
 });
 
 /* GIFs and meme templates from other sites come through here, so the page
@@ -327,9 +346,11 @@ function cleanAtt(list) {
     if (!a || typeof a !== 'object') continue;
     const u = String(a.u || '');
     let m, k = 'img';
-    if ((m = /^\/chatmedia\/([a-f0-9]{40}\.(png|jpg|gif|webp))$/.exec(u))) {
+    if ((m = /^\/chatmedia\/([a-f0-9]{40}\.(png|jpg|gif|webp|mp4|webm|mp3|m4a|ogg|wav|weba))$/.exec(u))) {
       if (!existsSync(join(MEDIA_DIR, m[1]))) continue;
       if (m[2] === 'gif') k = 'gif';
+      else if (VIDEO_EXT.includes(m[2])) k = 'vid';
+      else if (AUDIO_EXT.includes(m[2])) k = 'aud';
     } else if ((m = /^\/api\/chat\/gif\/([a-z0-9.-]+)\/[A-Za-z0-9._~=\/-]+$/i.exec(u))) {
       if (!REMOTE_HOSTS.test(m[1]) || u.includes('..')) continue;
       k = /\.gif$/i.test(u) ? 'gif' : 'img';
@@ -338,6 +359,13 @@ function cleanAtt(list) {
     const w = clampInt(a.w, 1, 20000), h = clampInt(a.h, 1, 20000);
     if (w && h) { o.w = w; o.h = h; }
     if (a.sp) o.sp = 1;
+    if (k === 'vid' || k === 'aud') {
+      const n = String(a.n || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 80);
+      if (n) o.n = n;
+      const d = Number(a.d);
+      if (d > 0 && d < 36000) o.d = Math.round(d * 10) / 10;
+      if (a.vm) o.vm = 1;                       // a voice message recorded in chat
+    }
     out.push(o);
   }
   return out;
@@ -353,7 +381,7 @@ function cleanPoll(p) {
   return { q, opts: opts.map((t) => ({ t, v: [] })) };
 }
 
-const snippet = (m) => String(m.text || (m.poll ? 'poll: ' + m.poll.q : (m.att && m.att.length ? '[picture]' : ''))).replace(/\s+/g, ' ').slice(0, 140);
+const snippet = (m) => String(m.text || (m.poll ? 'poll: ' + m.poll.q : (m.att && m.att.length ? ({ vid: '[video]', aud: m.att[0].vm ? '[voice message]' : '[audio]', gif: '[GIF]' }[m.att[0].k] || '[picture]') : ''))).replace(/\s+/g, ' ').slice(0, 140);
 
 /* What a client sees of a message: fingerprints stay here; it is told only
    which lines, reactions and votes are its own. */
@@ -1002,6 +1030,12 @@ function newInvite() {
 const cleanChanName = (v) => String(v || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
 const cleanIcon = (v) => [...String(v || '').trim()].slice(0, 2).join('');
 const cleanColour = (v) => (/^#[0-9a-f]{6}$/i.test(String(v || '')) ? String(v) : '');
+/* Banner and icon pictures (2026-11-14): must be a picture already uploaded
+   through /upload, so nothing from other sites ends up in a server card. */
+const cleanPic = (v) => {
+  const m = /^\/chatmedia\/([a-f0-9]{40}\.(png|jpg|gif|webp))$/.exec(String(v || ''));
+  return m && existsSync(join(MEDIA_DIR, m[1])) ? m[0] : '';
+};
 function addChannel(s, name, kind) {
   const r = mkRoom({ id: newRoomId(), kind: 'channel', server: s.id, name, ckind: kind === 'voice' ? 'voice' : 'text', members: [], owner: s.owner, created: new Date().toISOString().slice(0, 19), messages: [] });
   rooms.set(r.id, r);
@@ -1013,6 +1047,7 @@ function srvCard(s, pid) {
   const my = srvRank(s, pid);
   return {
     id: s.id, name: s.name, icon: s.icon || '', color: s.color || '', desc: s.desc || '', public: !!s.public,
+    banner: s.banner || '', pic: s.pic || '', ownerName: nameOf(s.owner), created: s.created || '',
     owner: s.owner, myRank: my, invite: s.invite,
     channels: s.channels.map((cid) => rooms.get(cid)).filter(Boolean).map((r) => {
       const last = r.messages[r.messages.length - 1];
@@ -1067,10 +1102,20 @@ router.get('/servers/discover', (req, res) => {
   const now = Date.now();
   const list = [...servers.values()].filter((s) => s.public && !(s.bans || []).includes(pid)).map((s) => ({
     id: s.id, name: s.name, icon: s.icon || '', color: s.color || '', desc: s.desc || '',
+    banner: s.banner || '', pic: s.pic || '', ownerName: nameOf(s.owner), created: s.created || '',
     members: s.members.length, online: s.members.filter((p) => now - ((people.get(p) || {}).last || 0) < 120000).length,
-    joined: s.members.includes(pid),
+    joined: s.members.includes(pid), public: true,
   })).sort((a, b) => b.online - a.online || b.members - a.members).slice(0, 100);
   res.json({ servers: list });
+});
+
+/* A public group's card by id, for share links (#group=<id>). */
+router.get('/servers/public/:id', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const s = servers.get(String(req.params.id || ''));
+  if (!s || !s.public) return res.status(404).json({ error: 'that group is private or gone' });
+  const now = Date.now();
+  res.json({ id: s.id, name: s.name, icon: s.icon || '', color: s.color || '', desc: s.desc || '', banner: s.banner || '', pic: s.pic || '', ownerName: nameOf(s.owner), created: s.created || '', members: s.members.length, online: s.members.filter((p) => now - ((people.get(p) || {}).last || 0) < 120000).length, public: true });
 });
 
 /* What an invite code points at, before joining. */
@@ -1079,7 +1124,7 @@ router.get('/servers/invite/:code', (req, res) => {
   const code = String(req.params.code || '').toLowerCase();
   const s = [...servers.values()].find((x) => x.invite === code);
   if (!s) return res.status(404).json({ error: 'that invite is not valid (it may have been reset)' });
-  res.json({ id: s.id, name: s.name, icon: s.icon || '', color: s.color || '', desc: s.desc || '', members: s.members.length });
+  res.json({ id: s.id, name: s.name, icon: s.icon || '', color: s.color || '', desc: s.desc || '', banner: s.banner || '', pic: s.pic || '', ownerName: nameOf(s.owner), members: s.members.length });
 });
 
 router.post('/servers/create', express.json({ limit: '4kb' }), (req, res) => {
@@ -1094,7 +1139,7 @@ router.post('/servers/create', express.json({ limit: '4kb' }), (req, res) => {
   if (all.filter((s) => s.members.includes(pid)).length >= SRV_MAX_JOINED) return res.status(400).json({ error: 'you are in too many servers - leave some first' });
   const s = {
     id: newSrvId(), name, icon: censor(cleanIcon(b.icon)), color: cleanColour(b.color), desc: censor(String(b.desc || '').slice(0, 160)),
-    public: b.public === true, owner: pid, members: [pid], roles: {}, bans: [], mutes: {}, invite: newInvite(), channels: [],
+    public: b.public === true, banner: cleanPic(b.banner), pic: cleanPic(b.pic), owner: pid, members: [pid], roles: {}, bans: [], mutes: {}, invite: newInvite(), channels: [],
     created: new Date().toISOString().slice(0, 19),
   };
   servers.set(s.id, s);
@@ -1146,6 +1191,8 @@ router.post('/servers/edit', express.json({ limit: '4kb' }), (req, res) => {
   if (b.color !== undefined) c.s.color = cleanColour(b.color);
   if (b.desc !== undefined) c.s.desc = censor(String(b.desc || '').slice(0, 160));
   if (b.public !== undefined) c.s.public = b.public === true;
+  if (b.banner !== undefined) c.s.banner = cleanPic(b.banner);
+  if (b.pic !== undefined) c.s.pic = cleanPic(b.pic);
   if (b.resetInvite === true) c.s.invite = newInvite();
   persist();
   res.json({ ok: true, server: srvCard(c.s, c.pid) });

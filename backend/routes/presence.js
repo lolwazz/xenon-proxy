@@ -164,6 +164,14 @@ router.get('/u/:uid', (req, res) => {
 });
 
 export function profileByDevice(id) { return people.get(id) || null; }
+/* Picture and border for a chat name, newest profile first (leaderboard). */
+export function pfpByName(name) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return null;
+  let best = null;
+  for (const p of people.values()) if (p.name && p.name.toLowerCase() === n && (!best || p.last > best.last)) best = p;
+  return best ? { pfp: best.pfp || '', border: best.border || 'none' } : null;
+}
 
 /* Used only by the admin panel. */
 export const presenceAdmin = {
