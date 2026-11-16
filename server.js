@@ -75,6 +75,19 @@ button{border:0;border-radius:999px;padding:.7rem 1.4rem;font:700 .8rem system-u
 
 // Shared clips and avatars, both written under data/ by their routers.
 app.use('/api/clips', clipsRouter);
+/* Leftover and hidden files are never served (2026-11-15): directory
+   scanners found old *.bak / *.pre-* copies of pages in public/. Anything
+   that looks like a backup, log, env file or dot-file is a 404, so a copy
+   left behind by mistake can't leak. Game files under /g/ are left alone
+   (some packs use odd names). /.well-known stays reachable. */
+const LEFTOVER = /(\.(bak|old|orig|save|swp|swo|tmp|log|env|sql|sqlite|db|pem|key)|\.pre-[^/]*|~)$/i;
+app.use((req, res, next) => {
+  const p = req.path;
+  if (p.startsWith('/g/')) return next();
+  if (LEFTOVER.test(p) || /\/\.(?!well-known\/)/.test(p)) return res.status(404).json({ error: 'not_found' });
+  next();
+});
+
 /* Studio rooms: live collaboration on one project (backend/routes/studio-collab.js). */
 mountStudioCollab(app);
 app.get('/clip/:cid', clipPage);
