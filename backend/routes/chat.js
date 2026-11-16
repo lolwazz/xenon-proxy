@@ -223,9 +223,9 @@ function spamShape(text) {
    open tabs with the old page keep working until they refresh. */
 const tickets = new Map();
 const BITS = 14, RAID_BITS = 17;
-/* Off until the site update that solves tickets is deployed (2026-11-15). Set
-   back to Date.now() + 20 * 60000 after that deploy. */
-const ENFORCE_AT = Date.now() + 5 * 60000;
+/* The site has solved tickets since 2026-11-15, so no grace period: a
+   restart must not open a window for scripts. */
+const ENFORCE_AT = 0;
 router.get('/ticket', (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (burst('tk:' + ipOf(req), 15, 0)) return res.status(429).json({ error: 'slow down a moment' });
