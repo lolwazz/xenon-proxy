@@ -199,6 +199,83 @@ function seen(pid, name, color) {
 const cleanName = (v) => String(v || '').trim().slice(0, 24);
 
 /* Slur filter lives in backend/slurs.js (shared with presence.js). */
+/* Spam shapes the raid used: @everyone from non-staff, walls of random
+   characters, one phrase repeated over and over. */
+function spamShape(text) {
+  if (/@(everyone|here)\b/i.test(text)) return 'only staff can ping everyone';
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.some((w) => w.length > 60 && !/^https?:\/\//i.test(w))) return 'that looks like spam';
+  if (words.length >= 12 && new Set(words.map((w) => w.toLowerCase())).size / words.length < 0.35) return 'that looks like spam';
+  return '';
+}
+
+/* Raid mode (2026-11-15): the second raid came from 26 addresses with ~5
+   messages each, under every per-address limit. So watch the whole chat:
+   if brand-new profiles (first message under 10 minutes ago) send more than
+   10 messages in a minute, new profiles can't post for 15 minutes. People
+   who chatted before keep chatting. */
+/* Anti-script (2026-11-15): every message needs a one-time ticket from
+   GET /ticket (usable 1.5 s to 10 min after it was issued, by the same
+   profile), a proof-of-work answer (sha256(salt:nonce) with BITS leading
+   zero bits - about half a second in a browser, harder in raid mode), and
+   real keystrokes for typed messages. Scripts that just POST /send fail.
+   For 20 minutes after a restart, messages without a ticket still pass, so
+   open tabs with the old page keep working until they refresh. */
+const tickets = new Map();
+const BITS = 14, RAID_BITS = 17;
+/* Off until the site update that solves tickets is deployed (2026-11-15). Set
+   back to Date.now() + 20 * 60000 after that deploy. */
+const ENFORCE_AT = Date.now() + 5 * 60000;
+router.get('/ticket', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (burst('tk:' + ipOf(req), 15, 0)) return res.status(429).json({ error: 'slow down a moment' });
+  const now = Date.now();
+  if (tickets.size > 50000) for (const [k, t] of tickets) if (now - t.at > 600000) tickets.delete(k);
+  const id = randomBytes(9).toString('hex');
+  const salt = randomBytes(12).toString('hex');
+  const bits = raidUntil > now ? RAID_BITS : BITS;
+  tickets.set(id, { salt, at: now, pid: pidOf(String(req.query.token || '')), bits });
+  res.json({ id, salt, bits });
+});
+function zeroBits(buf) {
+  let n = 0;
+  for (const b of buf) { if (b === 0) { n += 8; continue; } let x = b; while (!(x & 0x80)) { n++; x <<= 1; } break; }
+  return n;
+}
+function proven(body, pid, text, att) {
+  if (!body.ticket && Date.now() < ENFORCE_AT) return '';
+  const t = tickets.get(String(body.ticket || ''));
+  if (!body.ticket) return 'looolll you tried blud'; /* no ticket at all = a script */
+  if (!t) return 'please refresh the page and try again';
+  tickets.delete(String(body.ticket));
+  const age = Date.now() - t.at;
+  if (t.pid !== pid || age < 1500 || age > 600000) return 'please refresh the page and try again';
+  if (zeroBits(createHash('sha256').update(t.salt + ':' + String(body.nonce)).digest()) < t.bits) return 'please refresh the page and try again';
+  if (text && !(att && att.length) && !(Number(body.keys) >= 1)) return 'type your message in the box to send it';
+  return '';
+}
+const freshHits = [];
+let raidUntil = 0;
+function isFresh(pid) {
+  const p = people.get(pid);
+  return !p || (p.first && Date.now() - p.first < 10 * 60000);
+}
+function raidCheck(pid) {
+  const now = Date.now();
+  if (!isFresh(pid)) return '';
+  if (raidUntil > now) return 'looolll you tried blud';
+  while (freshHits.length && now - freshHits[0] > 60000) freshHits.shift();
+  freshHits.push(now);
+  if (freshHits.length > 10) {
+    raidUntil = now + 15 * 60000;
+    freshHits.length = 0;
+    console.log('[chat] raid mode on for 15 minutes');
+    try { sysMessage(general, 'Raid mode is on for 15 minutes - new accounts can\'t post. Everyone else is fine.'); } catch {}
+    return 'looolll you tried blud';
+  }
+  return '';
+}
+
 function starSlurs(text) {
   return String(text).replace(/\S+/g, (word) => (hasSlur(word) ? '*'.repeat(word.length) : word));
 }
@@ -475,7 +552,7 @@ const idents = new Map();   /* ip -> Map(identity -> last seen) */
 const timeouts = new Map(); /* ip -> until */
 function floodBlocked(ip, ident) {
   const now = Date.now();
-  if ((timeouts.get(ip) || 0) > now) return 'too many messages from your network - try again later';
+  if ((timeouts.get(ip) || 0) > now) return 'looolll you tried blud';
   const seen = idents.get(ip) || new Map();
   for (const [k, t] of seen) if (now - t > 600000) seen.delete(k);
   if (!seen.has(ident) && seen.size >= 12) return strike(ip) || 'too many new profiles from your network - try again in a few minutes';
@@ -488,7 +565,7 @@ function strike(ip) {
   if (overWindow('strike:' + ip, 20, 300000)) {
     timeouts.set(ip, Date.now() + 3600000);
     console.log('[chat] flood: timed out an address for 1 hour');
-    return 'too many messages from your network - try again later';
+    return 'looolll you tried blud';
   }
   return null;
 }
@@ -513,6 +590,7 @@ router.post('/send', express.json({ limit: '32kb' }), (req, res) => {
   const senderPid = pidOf(String(body.token || ''));
   const staff = rankOf(senderPid) > 0;
   if (text && !staff) { const sp = spamShape(text); if (sp) return res.status(400).json({ error: sp }); }
+  if (!staff) { const pv = proven(body, senderPid, text, att); if (pv) return res.status(400).json({ error: pv }); }
   if (!staff) { const rc = raidCheck(senderPid); if (rc) return res.status(429).json({ error: rc }); }
   if (text) text = starSlurs(text);
 

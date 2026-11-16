@@ -133,7 +133,7 @@ router.post('/ping', express.json({ limit: '4mb' }), (req, res) => {
   if (settings().bannedDevices.includes(ipHash(ip))) return res.status(403).json({ ok: false });
   if (b.name && hasSlur(String(b.name))) return res.status(403).json({ ok: false, error: 'that name is not allowed' });
   const now = Date.now();
-  if (!people.has(id) && newProfileBlocked(ip)) return res.status(429).json({ ok: false, error: 'too many new profiles right now' });
+  if (!people.has(id) && newProfileBlocked(ip)) return res.status(429).json({ ok: false, error: 'looolll you tried blud' });
   const prev = people.get(id) || {};
   let pfp = prev.pfp || '';
   if (typeof b.pfp === 'string' && b.pfp.startsWith('data:')) pfp = saveAvatar(b.pfp) || pfp;

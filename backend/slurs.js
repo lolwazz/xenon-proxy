@@ -29,39 +29,3 @@ export function hasSlur(s) {
   return false;
 }
 const SAFE_START = ['spicy', 'spice', 'spici', 'pakistan', 'tardis', 'tardy', 'tardi', 'coonhound', 'faggio', 'gookie'];
-/* Spam shapes the raid used: @everyone from non-staff, walls of random
-   characters, one phrase repeated over and over. */
-function spamShape(text) {
-  if (/@(everyone|here)\b/i.test(text)) return 'only staff can ping everyone';
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.some((w) => w.length > 60 && !/^https?:\/\//i.test(w))) return 'that looks like spam';
-  if (words.length >= 12 && new Set(words.map((w) => w.toLowerCase())).size / words.length < 0.35) return 'that looks like spam';
-  return '';
-}
-
-/* Raid mode (2026-11-15): the second raid came from 26 addresses with ~5
-   messages each, under every per-address limit. So watch the whole chat:
-   if brand-new profiles (first message under 10 minutes ago) send more than
-   10 messages in a minute, new profiles can't post for 15 minutes. People
-   who chatted before keep chatting. */
-const freshHits = [];
-let raidUntil = 0;
-function isFresh(pid) {
-  const p = people.get(pid);
-  return !p || (p.first && Date.now() - p.first < 10 * 60000);
-}
-function raidCheck(pid) {
-  const now = Date.now();
-  if (!isFresh(pid)) return '';
-  if (raidUntil > now) return 'chat is in raid mode - new accounts can post again in a few minutes';
-  while (freshHits.length && now - freshHits[0] > 60000) freshHits.shift();
-  freshHits.push(now);
-  if (freshHits.length > 10) {
-    raidUntil = now + 15 * 60000;
-    freshHits.length = 0;
-    console.log('[chat] raid mode on for 15 minutes');
-    try { sysMessage(general, 'Raid mode is on for 15 minutes - new accounts can\'t post. Everyone else is fine.'); } catch {}
-    return 'chat is in raid mode - new accounts can post again in a few minutes';
-  }
-  return '';
-}
